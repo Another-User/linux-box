@@ -400,15 +400,17 @@ def get_provider(config: dict) -> LLMProvider:
     The config dict must contain at least a ``provider`` key. Additional keys
     are forwarded to the provider constructor.
 
-    Supported ``provider`` values: "anthropic", "openai", "local".
+    Supported ``provider`` values: "auto", "anthropic", "openai", "local".
+
+    When ``provider`` is ``"auto"``, hardware detection runs to find the
+    best available option and falls back to the Anthropic API.
 
     Example config::
 
         {
-            "provider": "anthropic",
+            "provider": "auto",
             "api_key": "sk-ant-...",
-            "model": "claude-sonnet-4-5",
-            "retries": 3
+            "fallback_provider": "anthropic"
         }
 
     Args:
@@ -420,6 +422,7 @@ def get_provider(config: dict) -> LLMProvider:
     Raises:
         KeyError: If the "provider" key is missing.
         ValueError: If the provider name is not recognised.
+        RuntimeError: If "auto" mode cannot find any provider.
     """
     provider_name = config.get("provider", "").lower().strip()
     if not provider_name:
@@ -430,9 +433,13 @@ def get_provider(config: dict) -> LLMProvider:
     connect_timeout: float = float(config.get("connect_timeout", _DEFAULT_CONNECT_TIMEOUT))
     read_timeout: float = float(config.get("read_timeout", _DEFAULT_READ_TIMEOUT))
 
+    # Auto mode — detect hardware and pick the best provider
+    if provider_name == "auto":
+        return _auto_resolve(config, retries, connect_timeout, read_timeout)
+
     if provider_name == "anthropic":
-        api_key: str = config["api_key"]
-        model: str = config.get("model", "claude-sonnet-4-5")
+        api_key: str = config.get("api_key") or _env_key("ANTHROPIC_API_KEY")
+        model: str = config.get("model") or "claude-sonnet-4-5"
         return AnthropicProvider(
             api_key=api_key,
             model=model,
@@ -442,8 +449,8 @@ def get_provider(config: dict) -> LLMProvider:
         )
 
     if provider_name == "openai":
-        api_key = config["api_key"]
-        model = config.get("model", "gpt-4o")
+        api_key = config.get("api_key") or _env_key("OPENAI_API_KEY")
+        model = config.get("model") or "gpt-4o"
         return OpenAIProvider(
             api_key=api_key,
             model=model,
@@ -453,8 +460,8 @@ def get_provider(config: dict) -> LLMProvider:
         )
 
     if provider_name in ("local", "ollama", "lmstudio", "vllm"):
-        base_url: str = config.get("base_url", "http://localhost:11434")
-        model = config.get("model", "llama3")
+        base_url: str = config.get("base_url", config.get("local_url", "http://localhost:11434"))
+        model = config.get("model") or "llama3"
         return LocalProvider(
             base_url=base_url,
             model=model,
@@ -465,5 +472,92 @@ def get_provider(config: dict) -> LLMProvider:
 
     raise ValueError(
         f"Unknown provider '{provider_name}'. "
-        "Supported values: 'anthropic', 'openai', 'local'."
+        "Supported values: 'auto', 'anthropic', 'openai', 'local'."
+    )
+
+
+def _env_key(var_name: str) -> str:
+    """Read an API key from an environment variable."""
+    import os
+    return os.environ.get(var_name, "")
+
+
+def _auto_resolve(
+    config: dict,
+    retries: int,
+    connect_timeout: float,
+    read_timeout: float,
+) -> LLMProvider:
+    """Auto-detect hardware and return the best available provider.
+
+    Fallback chain:
+      1. Running local LLM service (Ollama, vLLM, etc.)
+      2. Anthropic API (if key available)
+      3. OpenAI API (if key available)
+    """
+    from cognition.hardware_detector import detect_hardware
+
+    profile = detect_hardware()
+
+    # 1. Try running local services
+    for svc in profile.local_services:
+        if svc.running and svc.models:
+            model = config.get("model") or svc.models[0]
+            logger.info(
+                "Auto-detected local %s at %s with model %s",
+                svc.name, svc.url, model,
+            )
+            return LocalProvider(
+                base_url=svc.url,
+                model=model,
+                retries=retries,
+                connect_timeout=connect_timeout,
+                read_timeout=max(read_timeout, 180.0),
+            )
+
+    # 2. Anthropic API fallback
+    anthropic_key = (
+        config.get("api_key")
+        or config.get("fallback_api_key")
+        or _env_key("ANTHROPIC_API_KEY")
+    )
+    if anthropic_key:
+        model = config.get("model") or "claude-sonnet-4-5"
+        logger.info("Auto-fallback to Anthropic API (%s)", model)
+        return AnthropicProvider(
+            api_key=anthropic_key,
+            model=model,
+            retries=retries,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+        )
+
+    # 3. OpenAI API fallback
+    openai_key = (
+        config.get("api_key")
+        or config.get("fallback_api_key")
+        or _env_key("OPENAI_API_KEY")
+    )
+    if openai_key:
+        model = config.get("model") or "gpt-4o"
+        logger.info("Auto-fallback to OpenAI API (%s)", model)
+        return OpenAIProvider(
+            api_key=openai_key,
+            model=model,
+            retries=retries,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+        )
+
+    # 4. Log hardware recommendation and fail gracefully
+    logger.error(
+        "No LLM provider available. Hardware: %d GPUs (%d MiB VRAM), "
+        "%d CPU cores, %d MiB RAM. Recommendation: %s",
+        len(profile.gpus), profile.total_vram_mb,
+        profile.cpu_cores, profile.ram_mb,
+        profile.recommendation_reason,
+    )
+    raise RuntimeError(
+        f"No LLM provider available. {profile.recommendation_reason}\n"
+        "Set llm.api_key or ANTHROPIC_API_KEY to use the Claude API fallback."
     )

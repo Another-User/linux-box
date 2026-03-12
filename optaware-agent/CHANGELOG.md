@@ -9,6 +9,54 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Phase 12 — Hardware-Aware LLM Provider Auto-Detection
+
+This phase adds automatic detection of GPUs, AI accelerators, and local
+LLM services so OptAware configures itself for the best available
+inference option at startup, with Anthropic Claude API as the fallback.
+
+#### Added
+
+- `cognition/hardware_detector.py` — Detects NVIDIA GPUs (nvidia-smi),
+  AMD GPUs (/sys/class/drm + rocm-smi), Intel accelerators (i915/xe
+  drivers).  Probes 6 common local LLM services (Ollama, LM Studio,
+  vLLM, llama.cpp, TGI, LocalAI) and enumerates their loaded models.
+  Reads CPU core count and RAM.  Returns a `HardwareProfile` with
+  `GPUInfo` list, `LocalLLMService` list, total VRAM, and a
+  recommendation (provider + model + reason) based on VRAM tier matching.
+
+- `cognition/provider_resolver.py` — `resolve_provider()` async function
+  that runs the fallback chain: local running service → GPU-capable local
+  → Anthropic API → OpenAI API.  Caches the hardware profile and resolved
+  provider.  `get_provider_status()` returns introspection data for the
+  API/portal.  `get_hardware_profile(force_refresh)` for on-demand
+  re-detection.
+
+#### Changed
+
+- `config/schema.py` — `LLMConfig.provider` now accepts ``"auto"``
+  (default).  Added fields: `local_url`, `fallback_provider` (default
+  ``"anthropic"``), `fallback_api_key`.
+
+- `config/defaults.py` — Default provider changed from ``"anthropic"``
+  to ``"auto"``.
+
+- `cognition/llm_provider.py` — `get_provider()` now supports
+  ``"auto"`` mode which runs hardware detection and the fallback chain.
+  Explicit providers also check environment variables
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) when `api_key` is empty.
+
+#### Technical notes
+
+- Hardware detection is synchronous (subprocess calls).  Runs once at
+  startup, cached thereafter.
+- VRAM tiers: ≥40 GB → 70B model, ≥20 GB → 34B, ≥10 GB → 13B,
+  ≥6 GB → 8B, ≥3 GB → 3B.
+- Servers with ≥16 GB RAM and ≥4 cores can run small models on CPU.
+- Set ``provider: anthropic`` to restore previous explicit behaviour.
+
+---
+
 ### Phase 11 — Multi-Agent Service Account Architecture
 
 This phase adds OS-enforced role separation so each agent component runs

@@ -21,14 +21,33 @@ class ServicesConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    """LLM provider configuration.
+
+    When ``provider`` is ``"auto"`` (default), OptAware detects available
+    hardware (GPUs, local LLM services) and selects the best provider at
+    startup.  The fallback chain is:
+      local GPU service → local CPU → Anthropic API → OpenAI API.
+    """
+
     model_config = ConfigDict(extra="ignore")
 
-    provider: str = Field(default="anthropic", pattern="^(anthropic|openai|local)$")
-    model: str = "claude-opus-4-5"
+    provider: str = Field(
+        default="auto",
+        pattern="^(auto|anthropic|openai|local)$",
+    )
+    model: str = ""
     api_key: str = ""
     max_tokens: int = Field(default=4096, ge=1, le=200000)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     cost_limit_daily: float = Field(default=10.0, ge=0.0)
+
+    # Auto-detection settings
+    local_url: str = ""
+    fallback_provider: str = Field(
+        default="anthropic",
+        pattern="^(anthropic|openai)$",
+    )
+    fallback_api_key: str = ""
 
 
 class PerceptionConfig(BaseModel):

@@ -13,12 +13,15 @@ DEFAULT_CONFIG: dict = {
         "auto_start": False,
     },
     "llm": {
-        "provider": "anthropic",
-        "model": "claude-opus-4-5",
+        "provider": "auto",
+        "model": "",
         "api_key": "",
         "max_tokens": 4096,
         "temperature": 0.2,
         "cost_limit_daily": 10.0,
+        "local_url": "",
+        "fallback_provider": "anthropic",
+        "fallback_api_key": "",
     },
     "perception": {
         "log_watch_enabled": True,
