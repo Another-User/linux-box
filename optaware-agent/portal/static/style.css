@@ -1,23 +1,56 @@
-/* OptAware Portal — Dark Theme */
+/* ============================================================
+   OptAware Portal — Complete Stylesheet
+   Dark theme, CSS custom properties, responsive layout
+   ============================================================ */
+
+/* ---- Custom Properties ------------------------------------ */
 :root {
-    --bg-primary: #0f0f1a;
-    --bg-secondary: #1a1a2e;
-    --bg-card: #16213e;
-    --bg-input: #1a1a3e;
-    --accent: #0f3460;
-    --highlight: #e94560;
-    --text-primary: #e0e0e0;
-    --text-secondary: #a0a0b0;
-    --text-muted: #6c6c80;
-    --border: #2a2a4a;
-    --success: #00c853;
-    --warning: #ffa726;
-    --error: #e94560;
-    --info: #42a5f5;
-    --sidebar-width: 240px;
-    --header-height: 60px;
-    --radius: 8px;
-    --transition: 0.2s ease;
+  /* Colours */
+  --bg-primary:    #1a1a2e;
+  --bg-secondary:  #16213e;
+  --bg-sidebar:    #0d0d1a;
+  --bg-card:       #16213e;
+  --bg-input:      #0d1526;
+  --accent:        #0f3460;
+  --highlight:     #e94560;
+  --highlight-dim: #b5304a;
+
+  --text-primary:   #e8eaf0;
+  --text-secondary: #9aa0b4;
+  --text-muted:     #5a6070;
+  --text-link:      #7eb8f7;
+
+  --green:    #2ecc71;
+  --green-bg: rgba(46, 204, 113, 0.12);
+  --red:      #e74c3c;
+  --red-bg:   rgba(231, 76, 60, 0.12);
+  --yellow:   #f39c12;
+  --yellow-bg: rgba(243, 156, 18, 0.12);
+  --blue:     #3498db;
+  --blue-bg:  rgba(52, 152, 219, 0.12);
+  --grey:     #7f8c8d;
+  --grey-bg:  rgba(127, 140, 141, 0.12);
+
+  --border:        rgba(255,255,255,0.07);
+  --border-focus:  rgba(126, 184, 247, 0.5);
+
+  /* Layout */
+  --sidebar-width: 220px;
+  --topbar-height: 56px;
+  --radius:        8px;
+  --radius-sm:     4px;
+  --radius-lg:     12px;
+  --shadow:        0 2px 12px rgba(0,0,0,0.4);
+  --shadow-card:   0 4px 20px rgba(0,0,0,0.3);
+
+  /* Typography */
+  --font-sans: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Mono', 'Consolas', monospace;
+  --font-size-base: 14px;
+  --line-height: 1.6;
+
+  /* Transitions */
+  --transition: 0.18s ease;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
