@@ -9,7 +9,94 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-Changes planned but not yet released are tracked in `PLAN.md`.
+### Phase 11 — Multi-Agent Service Account Architecture
+
+This phase adds OS-enforced role separation so each agent component runs
+under a dedicated Linux service account with least-privilege access.
+
+#### Added
+
+**Agent framework** (`agents/`)
+
+- `agents/identity.py` — `AgentRole` enum (coordinator, observer, planner,
+  executor, auditor), `AgentIdentity` frozen dataclass, `Permission` enum
+  with 10 granular permissions, `ROLE_PERMISSIONS` matrix mapping each role
+  to its allowed operations, `get_identity()` factory.
+
+- `agents/protocol.py` — `MessageType` enum (14 IPC message types),
+  `Message` dataclass with JSON serialisation, `sign_message()` and
+  `verify_signature()` using HMAC-SHA256 for tamper-proof action plans.
+
+- `agents/ipc.py` — `IPCServer` and `IPCClient` using async Unix domain
+  sockets with 4-byte length-prefixed framing.  Server sets socket
+  permissions to 0660.  Client supports auto-reconnect with exponential
+  backoff (1s/2s/4s).  Async context manager interface.
+
+- `agents/runner.py` — Per-role main loops: `run_coordinator` (IPC hub,
+  message routing), `run_observer` (psutil metrics, forwards to coordinator),
+  `run_planner` (listens for diagnosis requests), `run_executor` (validates
+  signed plans against allowlist, delegates to `planning.executor`),
+  `run_auditor` (append-only audit trail).  `drop_privileges()` for
+  setuid/setgid after socket binding.  CLI entry point:
+  `python -m agents.runner --role <role>`.
+
+**Deployment** (`deploy/`)
+
+- `deploy/systemd/optaware-{coordinator,observer,planner,executor,auditor}.service`
+  — Five systemd unit files with security hardening: `NoNewPrivileges`,
+  `ProtectSystem=strict`, `CapabilityBoundingSet`, `ReadOnlyPaths` /
+  `ReadWritePaths` scoped per role.  Coordinator uses `Wants=` to pull in
+  all agent units.
+
+- `deploy/sudoers.d/optaware-executor` — Scoped sudo rules restricting the
+  executor to systemctl start/stop/restart/reload/status, docker
+  start/stop/restart, and read-only diagnostics.  Explicitly denies rm, dd,
+  mkfs, chmod 777, iptables -F.
+
+- `deploy/setup-agents.sh` — Bash script that creates the `optaware` system
+  group, five service accounts, directories with correct ownership and
+  permissions, installs sudoers and systemd units.  Supports `--dry-run`.
+
+**Documentation**
+
+- `README.md` — Project overview with ASCII architecture diagram, quick
+  start guide, multi-agent deployment instructions, agent roles table, API
+  endpoint reference, CLI usage, configuration reference, project structure.
+
+**Tests**
+
+- `tests/test_agents.py` — Tests for `AgentRole` values, `ROLE_PERMISSIONS`
+  enforcement (observer read-only, planner no-execute, executor no-LLM,
+  auditor append-only), `AgentIdentity` immutability and serialisation,
+  `Message` round-trip serialisation, HMAC sign/verify (valid, wrong secret,
+  tampered payload, unsigned), IPC server-client round-trip over temp Unix
+  socket, command allowlist exact and wildcard matching.
+
+#### Changed
+
+- `config/schema.py` — Added `AgentRoleConfig` and `AgentsConfig` Pydantic
+  models.  Added `agents: AgentsConfig` field to `OptAwareConfig` (defaults
+  to `enabled: false` for backward compatibility).
+
+- `config/defaults.py` — Added `agents` section with per-role defaults
+  including user accounts and executor command allowlist.
+
+- `logging_setup.py` — Added `_agent_role_var` context variable alongside
+  existing `_correlation_id_var`.  Added `get_agent_role()` /
+  `set_agent_role()`.  `CorrelationIdFilter` now injects both
+  `correlation_id` and `agent_role` into every log record.
+
+#### Technical notes
+
+- Multi-agent mode is opt-in: set `agents.enabled: true` in config.  When
+  disabled (default), the monolithic `OptAwareDaemon` runs unchanged.
+- Action plans sent to the executor must carry a valid HMAC-SHA256 signature
+  produced using `agents.signing_secret`.  Plans with invalid or missing
+  signatures are rejected.
+- The executor validates every command against its `allowed_commands`
+  allowlist before execution.  Wildcard patterns (e.g. `systemctl restart *`)
+  are supported.
+- IPC uses no external dependencies — pure asyncio Unix domain sockets.
 
 ---
 
