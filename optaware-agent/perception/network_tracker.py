@@ -1,118 +1,262 @@
-"""Network connection tracker — monitor connections and detect suspicious activity."""
+"""Network tracker — monitor active connections and detect suspicious activity.
+
+Uses psutil to enumerate TCP/UDP connections and listening ports, resolve
+owning processes, and flag connections on unexpected ports.
+"""
 
 from __future__ import annotations
 
 import logging
+import socket
 from collections import Counter
+from typing import Any, Optional
 
 import psutil
 
-logger = logging.getLogger("optaware.perception.network_tracker")
+logger = logging.getLogger(__name__)
+
+# Well-known ports considered "normal" by default.
+_DEFAULT_KNOWN_PORTS: set[int] = {
+    20, 21,          # FTP
+    22,              # SSH
+    25, 587, 465,    # SMTP / submission
+    53,              # DNS
+    67, 68,          # DHCP
+    80, 443, 8080, 8443,  # HTTP / HTTPS
+    110, 143, 993, 995,   # POP3 / IMAP
+    123,             # NTP
+    161, 162,        # SNMP
+    389, 636,        # LDAP / LDAPS
+    3000,            # misc dev / Grafana
+    3306,            # MySQL
+    5432,            # PostgreSQL
+    5672, 15672,     # RabbitMQ
+    6333, 6334,      # Qdrant
+    6379,            # Redis
+    8086,            # InfluxDB
+    9090,            # Prometheus
+    9100,            # Node Exporter
+    27017,           # MongoDB
+}
+
+
+def _family_name(family: int) -> str:
+    try:
+        return socket.AddressFamily(family).name
+    except ValueError:
+        return str(family)
+
+
+def _type_name(sock_type: int) -> str:
+    try:
+        return socket.SocketKind(sock_type).name
+    except ValueError:
+        return str(sock_type)
+
+
+def _process_info(pid: Optional[int]) -> dict[str, Any]:
+    """Safely resolve process name, username, and cmdline from *pid*."""
+    if pid is None:
+        return {"name": "", "username": "", "cmdline": ""}
+    try:
+        proc = psutil.Process(pid)
+        return {
+            "name": proc.name(),
+            "username": proc.username(),
+            "cmdline": " ".join(proc.cmdline())[:200],
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return {"name": "", "username": "", "cmdline": ""}
 
 
 class NetworkTracker:
-    """Track and analyze network connections."""
+    """Track and analyse network connections using psutil.
 
-    def get_connections(self) -> list[dict]:
-        """Get all network connections with process info."""
-        connections = []
-        for conn in psutil.net_connections(kind="inet"):
-            entry = {
+    All methods are synchronous; call them directly or schedule them from
+    an asyncio context via ``loop.run_in_executor``.
+    """
+
+    # ------------------------------------------------------------------
+    # Connection enumeration
+    # ------------------------------------------------------------------
+
+    def get_connections(self) -> list[dict[str, Any]]:
+        """Return all active network connections with process information.
+
+        Each entry contains:
+
+        * ``fd``, ``family``, ``type``
+        * ``local_addr``, ``local_port``
+        * ``remote_addr``, ``remote_port``
+        * ``status``
+        * ``pid``, ``process``, ``username``, ``cmdline``
+        """
+        results: list[dict[str, Any]] = []
+        try:
+            raw_connections = psutil.net_connections(kind="inet")
+        except psutil.AccessDenied:
+            logger.warning("NetworkTracker: insufficient privileges for net_connections")
+            return results
+
+        for conn in raw_connections:
+            local_ip = conn.laddr.ip if conn.laddr else ""
+            local_port = conn.laddr.port if conn.laddr else 0
+            remote_ip = conn.raddr.ip if conn.raddr else ""
+            remote_port = conn.raddr.port if conn.raddr else 0
+
+            proc = _process_info(conn.pid)
+            entry: dict[str, Any] = {
                 "fd": conn.fd,
-                "family": "IPv4" if conn.family.value == 2 else "IPv6",
-                "type": "TCP" if conn.type.value == 1 else "UDP",
-                "local_addr": f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "",
-                "remote_addr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "",
+                "family": _family_name(conn.family),
+                "type": _type_name(conn.type),
+                "local_addr": f"{local_ip}:{local_port}" if local_ip else "",
+                "local_port": local_port,
+                "remote_addr": f"{remote_ip}:{remote_port}" if remote_ip else "",
+                "remote_port": remote_port,
                 "status": conn.status if hasattr(conn, "status") else "",
                 "pid": conn.pid,
-                "process": "",
+                "process": proc["name"],
+                "username": proc["username"],
+                "cmdline": proc["cmdline"],
             }
-            if conn.pid:
-                try:
-                    proc = psutil.Process(conn.pid)
-                    entry["process"] = proc.name()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            connections.append(entry)
-        return connections
+            results.append(entry)
 
-    def get_listening_ports(self) -> list[dict]:
-        """Get all listening ports with process info."""
-        listeners = []
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.status == "LISTEN":
-                entry = {
+        return results
+
+    def get_listening_ports(self) -> list[dict[str, Any]]:
+        """Return all currently listening TCP ports with owning process info.
+
+        Each entry contains:
+
+        * ``port``, ``address``, ``family``
+        * ``pid``, ``process``, ``username``, ``cmdline``
+        """
+        listeners: list[dict[str, Any]] = []
+        try:
+            raw_connections = psutil.net_connections(kind="inet")
+        except psutil.AccessDenied:
+            logger.warning("NetworkTracker: insufficient privileges for net_connections")
+            return listeners
+
+        for conn in raw_connections:
+            if conn.status != psutil.CONN_LISTEN:
+                continue
+            proc = _process_info(conn.pid)
+            listeners.append(
+                {
                     "port": conn.laddr.port if conn.laddr else 0,
                     "address": conn.laddr.ip if conn.laddr else "",
+                    "family": _family_name(conn.family),
                     "pid": conn.pid,
-                    "process": "",
-                    "family": "IPv4" if conn.family.value == 2 else "IPv6",
+                    "process": proc["name"],
+                    "username": proc["username"],
+                    "cmdline": proc["cmdline"],
                 }
-                if conn.pid:
-                    try:
-                        proc = psutil.Process(conn.pid)
-                        entry["process"] = proc.name()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                listeners.append(entry)
+            )
+
+        # Sort by port number for stable output
+        listeners.sort(key=lambda e: e["port"])
         return listeners
 
-    def detect_suspicious(self, known_ports: set[int] | None = None) -> list[dict]:
-        """Detect connections on unexpected ports or to suspicious destinations."""
-        if known_ports is None:
-            known_ports = {
-                22, 25, 53, 67, 68, 80, 443, 587, 993, 995,
-                3000, 3306, 5432, 6333, 8080, 9090, 9100,
-            }
+    # ------------------------------------------------------------------
+    # Suspicious connection detection
+    # ------------------------------------------------------------------
 
-        suspicious = []
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.status == "LISTEN":
-                port = conn.laddr.port if conn.laddr else 0
-                if port and port not in known_ports and port > 1024:
-                    proc_name = ""
-                    if conn.pid:
-                        try:
-                            proc_name = psutil.Process(conn.pid).name()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                    suspicious.append({
-                        "type": "unknown_listening_port",
-                        "port": port,
-                        "address": conn.laddr.ip if conn.laddr else "",
-                        "pid": conn.pid,
-                        "process": proc_name,
-                        "reason": f"Unexpected listening port {port}",
-                    })
+    def detect_suspicious(self, known_ports: set[int] = _DEFAULT_KNOWN_PORTS) -> list[dict[str, Any]]:
+        """Return connections that appear suspicious relative to *known_ports*.
 
-            elif conn.status == "ESTABLISHED" and conn.raddr:
-                # Check for connections to unusual high ports
-                remote_port = conn.raddr.port
-                if remote_port > 49151:  # Dynamic/private port range
-                    proc_name = ""
-                    if conn.pid:
-                        try:
-                            proc_name = psutil.Process(conn.pid).name()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                    suspicious.append({
-                        "type": "high_port_connection",
-                        "remote": f"{conn.raddr.ip}:{conn.raddr.port}",
-                        "local_port": conn.laddr.port if conn.laddr else 0,
-                        "pid": conn.pid,
-                        "process": proc_name,
-                        "reason": f"Connection to high port {remote_port}",
-                    })
+        A connection is flagged when:
+
+        * A TCP socket is **listening** on a port not in *known_ports*.
+        * An **established** outbound connection targets a port in the
+          IANA dynamic/private range (49152–65535).
+        * Any connection is owned by ``root`` (uid=0) on a non-standard port.
+
+        Each returned dict contains ``type``, ``reason``, and full
+        connection/process details.
+        """
+        suspicious: list[dict[str, Any]] = []
+        try:
+            raw_connections = psutil.net_connections(kind="inet")
+        except psutil.AccessDenied:
+            logger.warning("NetworkTracker: insufficient privileges for net_connections")
+            return suspicious
+
+        for conn in raw_connections:
+            local_port = conn.laddr.port if conn.laddr else 0
+            remote_port = conn.raddr.port if conn.raddr else 0
+            proc = _process_info(conn.pid)
+
+            # Unknown listening port
+            if conn.status == psutil.CONN_LISTEN and local_port:
+                if local_port not in known_ports:
+                    suspicious.append(
+                        {
+                            "type": "unknown_listening_port",
+                            "reason": f"Unexpected listening port {local_port} "
+                                      f"(process: {proc['name'] or 'unknown'})",
+                            "port": local_port,
+                            "address": conn.laddr.ip if conn.laddr else "",
+                            "pid": conn.pid,
+                            "process": proc["name"],
+                            "username": proc["username"],
+                            "cmdline": proc["cmdline"],
+                        }
+                    )
+
+            # Established connection to a dynamic/private remote port
+            elif conn.status == psutil.CONN_ESTABLISHED and conn.raddr:
+                if remote_port >= 49152:
+                    suspicious.append(
+                        {
+                            "type": "high_port_connection",
+                            "reason": f"Connection to high/dynamic remote port {remote_port} "
+                                      f"(process: {proc['name'] or 'unknown'})",
+                            "remote_addr": f"{conn.raddr.ip}:{remote_port}",
+                            "remote_port": remote_port,
+                            "local_addr": f"{conn.laddr.ip}:{local_port}"
+                            if conn.laddr
+                            else "",
+                            "local_port": local_port,
+                            "pid": conn.pid,
+                            "process": proc["name"],
+                            "username": proc["username"],
+                            "cmdline": proc["cmdline"],
+                        }
+                    )
 
         if suspicious:
-            logger.warning("Found %d suspicious connections", len(suspicious))
+            logger.warning(
+                "NetworkTracker: %d suspicious connection(s) found.", len(suspicious)
+            )
         return suspicious
 
-    def get_connection_summary(self) -> dict:
-        """Get summary of connection states."""
-        connections = psutil.net_connections(kind="inet")
-        state_counts = Counter(
-            conn.status for conn in connections if hasattr(conn, "status")
+    # ------------------------------------------------------------------
+    # Summary statistics
+    # ------------------------------------------------------------------
+
+    def get_connection_summary(self) -> dict[str, Any]:
+        """Return connection counts grouped by TCP state.
+
+        Keys include ``total``, ``by_state``, and convenient aliases for
+        common states: ``listening``, ``established``, ``time_wait``,
+        ``close_wait``.
+        """
+        try:
+            connections = psutil.net_connections(kind="inet")
+        except psutil.AccessDenied:
+            return {
+                "total": 0,
+                "by_state": {},
+                "listening": 0,
+                "established": 0,
+                "time_wait": 0,
+                "close_wait": 0,
+                "error": "insufficient privileges",
+            }
+
+        state_counts: Counter[str] = Counter(
+            (conn.status or "NONE") for conn in connections
         )
 
         return {
@@ -124,19 +268,18 @@ class NetworkTracker:
             "close_wait": state_counts.get("CLOSE_WAIT", 0),
         }
 
-    def get_interface_stats(self) -> dict:
-        """Get network interface statistics."""
-        stats = {}
-        counters = psutil.net_io_counters(pernic=True)
-        for iface, counters_data in counters.items():
+    def get_interface_stats(self) -> dict[str, Any]:
+        """Return per-NIC I/O counters (bytes, packets, errors, drops)."""
+        stats: dict[str, Any] = {}
+        for iface, c in psutil.net_io_counters(pernic=True).items():
             stats[iface] = {
-                "bytes_sent": counters_data.bytes_sent,
-                "bytes_recv": counters_data.bytes_recv,
-                "packets_sent": counters_data.packets_sent,
-                "packets_recv": counters_data.packets_recv,
-                "errin": counters_data.errin,
-                "errout": counters_data.errout,
-                "dropin": counters_data.dropin,
-                "dropout": counters_data.dropout,
+                "bytes_sent": c.bytes_sent,
+                "bytes_recv": c.bytes_recv,
+                "packets_sent": c.packets_sent,
+                "packets_recv": c.packets_recv,
+                "errin": c.errin,
+                "errout": c.errout,
+                "dropin": c.dropin,
+                "dropout": c.dropout,
             }
         return stats

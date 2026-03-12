@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-wrap settings-page">
+
+  <div class="settings-layout">
+
+    <!-- Left column: Config display -->
+    <section class="section-block settings-readonly-section">
+      <h2 class="section-title">Current Configuration</h2>
+      <p class="settings-note">Sensitive values (API keys, secrets) are redacted. This is read-only.</p>
+      <div id="current-config-display">
+        <div class="loading-state"><span class="spinner"></span> Loading configuration…</div>
+      </div>
+    </section>
+
+    <!-- Right column: Editable settings -->
+    <section class="section-block settings-edit-section">
+
+      <h2 class="section-title">Edit Settings</h2>
+
+      <form class="settings-form" id="settings-form">
+
+        <!-- LLM Provider -->
+        <fieldset class="settings-fieldset">
+          <legend class="settings-legend">LLM Provider</legend>
+
+          <div class="form-row">
+            <label class="form-label" for="llm-provider">Provider</label>
+            <select class="form-select" id="llm-provider" name="llm.provider">
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI (GPT)</option>
+              <option value="local">Local (Ollama)</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="llm-model">Model</label>
+            <input class="form-input" type="text" id="llm-model" name="llm.model"
+              placeholder="e.g. claude-opus-4-5 or gpt-4o" />
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="llm-api-key">API Key</label>
+            <div class="input-with-toggle">
+              <input class="form-input" type="password" id="llm-api-key" name="llm.api_key"
+                placeholder="Leave blank to keep current key" autocomplete="new-password" />
+              <button type="button" class="toggle-visibility" id="toggle-apikey" aria-label="Toggle visibility">&#128065;</button>
+            </div>
+            <span class="form-hint">Leave blank to keep the existing key.</span>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="llm-max-tokens">Max Tokens</label>
+            <input class="form-input" type="number" id="llm-max-tokens" name="llm.max_tokens"
+              min="1" max="200000" step="256" placeholder="4096" />
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="llm-temperature">Temperature</label>
+            <div class="range-row">
+              <input class="form-range" type="range" id="llm-temperature" name="llm.temperature"
+                min="0" max="2" step="0.05" value="0.2"
+                oninput="document.getElementById('temp-display').textContent = this.value" />
+              <span class="range-display" id="temp-display">0.2</span>
+            </div>
+          </div>
+
+        </fieldset>
+
+        <!-- Planning -->
+        <fieldset class="settings-fieldset">
+          <legend class="settings-legend">Planning &amp; Automation</legend>
+
+          <div class="form-row">
+            <label class="form-label" for="approval-mode">Approval Mode</label>
+            <select class="form-select" id="approval-mode" name="planning.approval_mode">
+              <option value="manual">Manual — all actions require approval</option>
+              <option value="hybrid">Hybrid — low-risk actions auto-approved</option>
+              <option value="auto">Auto — all actions run automatically</option>
+            </select>
+            <span class="form-hint warning-hint" id="auto-mode-warning" style="display:none">
+              &#9888; Auto mode will execute all recommended actions without confirmation. Use with caution.
+            </span>
+          </div>
+
+          <div class="form-row toggle-row">
+            <label class="form-label" for="dry-run">Dry Run Default</label>
+            <label class="toggle-label">
+              <input type="checkbox" id="dry-run" name="planning.dry_run_default" class="toggle-check" />
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="form-hint">Run actions in simulation mode unless explicitly confirmed.</span>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="max-concurrent">Max Concurrent Actions</label>
+            <input class="form-input narrow" type="number" id="max-concurrent"
+              name="planning.max_concurrent_actions" min="1" max="20" placeholder="3" />
+          </div>
+
+        </fieldset>
+
+        <!-- Cost Limits -->
+        <fieldset class="settings-fieldset">
+          <legend class="settings-legend">Cost Limits</legend>
+
+          <div class="form-row">
+            <label class="form-label" for="cost-limit">Daily Cost Limit (USD)</label>
+            <div class="input-prefix-wrap">
+              <span class="input-prefix">$</span>
+              <input class="form-input with-prefix" type="number" id="cost-limit"
+                name="llm.cost_limit_daily" min="0" step="0.50" placeholder="10.00" />
+            </div>
+            <span class="form-hint">OptAware will stop making LLM calls when this limit is reached.</span>
+          </div>
+
+        </fieldset>
+
+        <!-- Perception -->
+        <fieldset class="settings-fieldset">
+          <legend class="settings-legend">Perception &amp; Monitoring</legend>
+
+          <div class="form-row">
+            <label class="form-label" for="metric-interval">Metric Interval (seconds)</label>
+            <input class="form-input narrow" type="number" id="metric-interval"
+              name="perception.metric_interval_sec" min="5" max="3600" placeholder="30" />
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="anomaly-sensitivity">Anomaly Sensitivity</label>
+            <div class="range-row">
+              <input class="form-range" type="range" id="anomaly-sensitivity"
+                name="perception.anomaly_sensitivity" min="0" max="1" step="0.05" value="0.5"
+                oninput="document.getElementById('sensitivity-display').textContent = this.value" />
+              <span class="range-display" id="sensitivity-display">0.5</span>
+            </div>
+            <span class="form-hint">Higher values detect more anomalies (more noise); lower values detect only severe deviations.</span>
+          </div>
+
+          <div class="form-row toggle-row">
+            <label class="form-label" for="log-watch">Log Watch Enabled</label>
+            <label class="toggle-label">
+              <input type="checkbox" id="log-watch" name="perception.log_watch_enabled" class="toggle-check" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+        </fieldset>
+
+        <!-- Save -->
+        <div class="form-row form-actions">
+          <button type="submit" class="btn btn-primary btn-lg" id="save-btn">Save Settings</button>
+          <button type="button" class="btn btn-secondary btn-lg" id="reset-btn">Reset to Defaults</button>
+          <span class="save-status" id="save-status"></span>
+        </div>
+
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initSettings() {
+
+  // ---- populate config display ----
+  function loadCurrentConfig() {
+    const display = document.getElementById('current-config-display');
+    fetchAPI('/api/config').then(data => {
+      if (!data) { display.innerHTML = '<div class="empty-state error-text">Could not load config.</div>'; return; }
+
+      // Redact sensitive fields
+      function redact(obj, path) {
+        if (typeof obj !== 'object' || obj === null) return obj;
+        const result = {};
+        for (const [k, v] of Object.entries(obj)) {
+          const fullPath = path ? path + '.' + k : k;
+          const sensitiveKeys = ['api_key', 'secret_key', 'password', 'token'];
+          if (sensitiveKeys.some(s => k.includes(s)) && v) {
+            result[k] = '***REDACTED***';
+          } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+            result[k] = redact(v, fullPath);
+          } else {
+            result[k] = v;
+          }
+        }
+        return result;
+      }
+
+      const redacted = redact(data);
+      display.innerHTML = '<pre class="config-pre">' + escHtml(JSON.stringify(redacted, null, 2)) + '</pre>';
+
+      // Populate editable fields
+      if (data.llm) {
+        setVal('llm-provider', data.llm.provider);
+        setVal('llm-model', data.llm.model);
+        setVal('llm-max-tokens', data.llm.max_tokens);
+        setVal('llm-temperature', data.llm.temperature);
+        document.getElementById('temp-display').textContent = data.llm.temperature;
+        setVal('cost-limit', data.llm.cost_limit_daily);
+      }
+      if (data.planning) {
+        setVal('approval-mode', data.planning.approval_mode);
+        setCheck('dry-run', data.planning.dry_run_default);
+        setVal('max-concurrent', data.planning.max_concurrent_actions);
+      }
+      if (data.perception) {
+        setVal('metric-interval', data.perception.metric_interval_sec);
+        setVal('anomaly-sensitivity', data.perception.anomaly_sensitivity);
+        document.getElementById('sensitivity-display').textContent = data.perception.anomaly_sensitivity;
+        setCheck('log-watch', data.perception.log_watch_enabled);
+      }
+    }).catch(() => {
+      display.innerHTML = '<div class="empty-state error-text">Failed to load configuration.</div>';
+    });
+  }
+
+  function setVal(id, val) {
+    const el = document.getElementById(id);
+    if (el && val !== undefined && val !== null) el.value = val;
+  }
+  function setCheck(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!val;
+  }
+
+  // ---- approval mode warning ----
+  document.getElementById('approval-mode').addEventListener('change', function() {
+    const warn = document.getElementById('auto-mode-warning');
+    warn.style.display = this.value === 'auto' ? 'block' : 'none';
+  });
+
+  // ---- API key visibility toggle ----
+  document.getElementById('toggle-apikey').addEventListener('click', function() {
+    const inp = document.getElementById('llm-api-key');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    this.textContent = inp.type === 'password' ? '\u{1F441}' : '\u{1F576}';
+  });
+
+  // ---- form submit ----
+  document.getElementById('settings-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const saveBtn    = document.getElementById('save-btn');
+    const saveStatus = document.getElementById('save-status');
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    saveStatus.textContent = '';
+    saveStatus.className = 'save-status';
+
+    const payload = {
+      llm: {
+        provider:         document.getElementById('llm-provider').value,
+        model:            document.getElementById('llm-model').value,
+        max_tokens:       parseInt(document.getElementById('llm-max-tokens').value) || undefined,
+        temperature:      parseFloat(document.getElementById('llm-temperature').value),
+        cost_limit_daily: parseFloat(document.getElementById('cost-limit').value) || undefined,
+      },
+      planning: {
+        approval_mode:        document.getElementById('approval-mode').value,
+        dry_run_default:      document.getElementById('dry-run').checked,
+        max_concurrent_actions: parseInt(document.getElementById('max-concurrent').value) || undefined,
+      },
+      perception: {
+        metric_interval_sec:  parseInt(document.getElementById('metric-interval').value) || undefined,
+        anomaly_sensitivity:  parseFloat(document.getElementById('anomaly-sensitivity').value),
+        log_watch_enabled:    document.getElementById('log-watch').checked,
+      },
+    };
+
+    // Include API key only if the user typed one
+    const apiKey = document.getElementById('llm-api-key').value.trim();
+    if (apiKey) payload.llm.api_key = apiKey;
+
+    // Remove undefined
+    function stripUndefined(obj) {
+      return JSON.parse(JSON.stringify(obj, (_, v) => v === undefined ? undefined : v));
+    }
+
+    fetchAPI('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stripUndefined(payload)),
+    }).then(data => {
+      saveStatus.textContent = 'Settings saved successfully.';
+      saveStatus.className = 'save-status save-ok';
+      document.getElementById('llm-api-key').value = '';
+      loadCurrentConfig();
+    }).catch(() => {
+      saveStatus.textContent = 'Failed to save settings. Check the API.';
+      saveStatus.className = 'save-status save-err';
+    }).finally(() => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Settings';
+      setTimeout(() => { saveStatus.textContent = ''; saveStatus.className = 'save-status'; }, 5000);
+    });
+  });
+
+  // ---- reset ----
+  document.getElementById('reset-btn').addEventListener('click', function() {
+    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+    fetchAPI('/api/config/reset', { method: 'POST' })
+      .then(() => {
+        document.getElementById('save-status').textContent = 'Reset to defaults.';
+        document.getElementById('save-status').className = 'save-status save-ok';
+        loadCurrentConfig();
+      })
+      .catch(() => {
+        document.getElementById('save-status').textContent = 'Reset failed.';
+        document.getElementById('save-status').className = 'save-status save-err';
+      });
+  });
+
+  loadCurrentConfig();
+})();
+</script>
+{% endblock %}

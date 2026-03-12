@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-wrap">
+
+  <!-- Filters & controls -->
+  <section class="filter-bar card">
+    <div class="filter-group">
+      <label class="filter-label" for="filter-type">Type</label>
+      <select class="filter-select" id="filter-type">
+        <option value="">All</option>
+        <option value="core">Core</option>
+        <option value="elective">Elective</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="filter-status">Status</label>
+      <select class="filter-select" id="filter-status">
+        <option value="">All</option>
+        <option value="running">Running</option>
+        <option value="stopped">Stopped</option>
+        <option value="degraded">Degraded</option>
+        <option value="unknown">Unknown</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <input class="filter-input" type="search" id="filter-search" placeholder="Search services…" />
+    </div>
+    <div class="filter-group filter-group-btns">
+      <button class="btn btn-secondary" id="refresh-services">&#8635; Refresh</button>
+    </div>
+  </section>
+
+  <!-- Summary strip -->
+  <div class="service-summary" id="service-summary"></div>
+
+  <!-- Service cards grid -->
+  <section class="section-block">
+    <div id="services-grid" class="services-card-grid">
+      <div class="loading-state"><span class="spinner"></span> Loading services…</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Service detail modal -->
+<div class="modal-overlay" id="service-modal" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box modal-wide">
+    <div class="modal-header">
+      <h3 class="modal-title" id="svc-modal-title">Service Details</h3>
+      <button class="modal-close" id="svc-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="svc-modal-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initServices() {
+  let allServices = [];
+
+  function statusClass(s) {
+    switch (s) {
+      case 'running':  return 'green';
+      case 'stopped':  return 'red';
+      case 'degraded': return 'yellow';
+      case 'starting': case 'stopping': return 'yellow';
+      default: return 'grey';
+    }
+  }
+  function statusLabel(s) {
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
+  }
+
+  // ---- load & render ----
+  function loadServices() {
+    const grid = document.getElementById('services-grid');
+    grid.innerHTML = '<div class="loading-state"><span class="spinner"></span> Loading services…</div>';
+    fetchAPI('/api/services').then(data => {
+      allServices = (data && data.services) || [];
+      renderSummary();
+      applyFilters();
+    }).catch(() => {
+      grid.innerHTML = '<div class="empty-state error-text">Failed to load services.</div>';
+    });
+  }
+
+  function renderSummary() {
+    const total    = allServices.length;
+    const running  = allServices.filter(s => s.status === 'running').length;
+    const stopped  = allServices.filter(s => s.status === 'stopped').length;
+    const degraded = allServices.filter(s => s.status === 'degraded').length;
+    const core     = allServices.filter(s => s.service_type === 'core').length;
+    document.getElementById('service-summary').innerHTML = `
+      <div class="stat-chip"><span class="stat-chip-label">Total</span><span class="stat-chip-value">${total}</span></div>
+      <div class="stat-chip"><span class="stat-chip-label">Running</span><span class="stat-chip-value green">${running}</span></div>
+      <div class="stat-chip"><span class="stat-chip-label">Stopped</span><span class="stat-chip-value red">${stopped}</span></div>
+      <div class="stat-chip"><span class="stat-chip-label">Degraded</span><span class="stat-chip-value yellow">${degraded}</span></div>
+      <div class="stat-chip"><span class="stat-chip-label">Core</span><span class="stat-chip-value accent">${core}</span></div>
+    `;
+  }
+
+  function applyFilters() {
+    const typeF   = document.getElementById('filter-type').value;
+    const statusF = document.getElementById('filter-status').value;
+    const searchF = document.getElementById('filter-search').value.toLowerCase();
+
+    const filtered = allServices.filter(s => {
+      if (typeF   && s.service_type !== typeF) return false;
+      if (statusF && s.status !== statusF)     return false;
+      if (searchF) {
+        const name = (s.display_name || s.name || '').toLowerCase();
+        if (!name.includes(searchF)) return false;
+      }
+      return true;
+    });
+
+    renderGrid(filtered);
+  }
+
+  function renderGrid(services) {
+    const grid = document.getElementById('services-grid');
+    if (services.length === 0) {
+      grid.innerHTML = '<div class="empty-state">No services match the current filters.</div>';
+      return;
+    }
+    grid.innerHTML = services.map(svc => `
+      <div class="service-card" data-name="${escHtml(svc.name)}">
+        <div class="service-card-top">
+          <div class="service-card-name">${escHtml(svc.display_name || svc.name)}</div>
+          <span class="badge badge-${statusClass(svc.status)}">${statusLabel(svc.status)}</span>
+        </div>
+        <div class="service-card-meta">
+          <span class="type-chip type-${escHtml(svc.service_type || 'elective')}">${escHtml(svc.service_type || 'elective')}</span>
+          ${svc.port ? '<span class="port-chip">:' + svc.port + '</span>' : ''}
+          ${svc.systemd_unit ? '<span class="unit-chip">' + escHtml(svc.systemd_unit) + '</span>' : ''}
+          ${svc.docker_container ? '<span class="unit-chip docker-chip">&#9650; ' + escHtml(svc.docker_container) + '</span>' : ''}
+        </div>
+        <div class="service-card-actions">
+          <button class="btn btn-xs btn-success" onclick="serviceAction('${escHtml(svc.name)}','start',this)" ${svc.status === 'running' ? 'disabled' : ''}>Start</button>
+          <button class="btn btn-xs btn-danger"  onclick="serviceAction('${escHtml(svc.name)}','stop',this)"  ${svc.status === 'stopped' ? 'disabled' : ''}>Stop</button>
+          <button class="btn btn-xs btn-secondary" onclick="serviceAction('${escHtml(svc.name)}','restart',this)">Restart</button>
+          <button class="btn btn-xs btn-accent" onclick="serviceAction('${escHtml(svc.name)}','diagnose',this)">Diagnose</button>
+          <button class="btn btn-xs btn-secondary" onclick='showServiceDetail(${escHtml(JSON.stringify(svc))})'>Details</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ---- service actions ----
+  window.serviceAction = function(name, action, btn) {
+    const label = { start: 'Starting', stop: 'Stopping', restart: 'Restarting', diagnose: 'Diagnosing' }[action] || action;
+    if (btn) { btn.disabled = true; btn.textContent = label + '…'; }
+    fetchAPI('/api/services/' + encodeURIComponent(name) + '/' + action, { method: 'POST' })
+      .then(data => {
+        if (data && data.message) showToast(data.message, 'info');
+        setTimeout(loadServices, 1500);
+      })
+      .catch(() => {
+        showToast('Failed to ' + action + ' ' + name, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = action.charAt(0).toUpperCase() + action.slice(1); }
+      });
+  };
+
+  // ---- service detail modal ----
+  window.showServiceDetail = function(svc) {
+    document.getElementById('svc-modal-title').textContent = (svc.display_name || svc.name);
+    document.getElementById('svc-modal-body').innerHTML = `
+      <div class="modal-meta">
+        <span><strong>Name:</strong> ${escHtml(svc.name)}</span>
+        <span><strong>Type:</strong> <span class="type-chip type-${escHtml(svc.service_type || '')}">${escHtml(svc.service_type || '—')}</span></span>
+        <span><strong>Status:</strong> <span class="badge badge-${statusClass(svc.status)}">${statusLabel(svc.status)}</span></span>
+        ${svc.port ? '<span><strong>Port:</strong> ' + svc.port + '</span>' : ''}
+        ${svc.systemd_unit ? '<span><strong>Systemd Unit:</strong> <code>' + escHtml(svc.systemd_unit) + '</code></span>' : ''}
+        ${svc.docker_container ? '<span><strong>Container:</strong> <code>' + escHtml(svc.docker_container) + '</code></span>' : ''}
+        ${svc.health_check_cmd ? '<span><strong>Health Check:</strong> <code>' + escHtml(svc.health_check_cmd) + '</code></span>' : ''}
+      </div>
+      ${svc.config_paths && svc.config_paths.length > 0 ? `
+        <div class="detail-section">
+          <strong>Config Paths:</strong>
+          <ul class="path-list">${svc.config_paths.map(p => '<li><code>' + escHtml(p) + '</code></li>').join('')}</ul>
+        </div>
+      ` : ''}
+      ${svc.log_paths && svc.log_paths.length > 0 ? `
+        <div class="detail-section">
+          <strong>Log Paths:</strong>
+          <ul class="path-list">${svc.log_paths.map(p => '<li><code>' + escHtml(p) + '</code></li>').join('')}</ul>
+        </div>
+      ` : ''}
+      ${svc.dependencies && svc.dependencies.length > 0 ? `
+        <div class="detail-section">
+          <strong>Dependencies:</strong>
+          <ul class="dep-list">${svc.dependencies.map(d =>
+            '<li>' + escHtml(d.service_name) + (d.required ? ' <span class="badge badge-red">required</span>' : ' <span class="badge badge-grey">optional</span>') + '</li>'
+          ).join('')}</ul>
+        </div>
+      ` : ''}
+      <div class="modal-footer-actions">
+        <button class="btn btn-success" onclick="serviceAction('${escHtml(svc.name)}','start')">Start</button>
+        <button class="btn btn-danger"  onclick="serviceAction('${escHtml(svc.name)}','stop')">Stop</button>
+        <button class="btn btn-secondary" onclick="serviceAction('${escHtml(svc.name)}','restart')">Restart</button>
+        <button class="btn btn-accent" onclick="serviceAction('${escHtml(svc.name)}','diagnose')">Diagnose</button>
+      </div>
+    `;
+    document.getElementById('service-modal').style.display = 'flex';
+  };
+
+  document.getElementById('svc-modal-close').addEventListener('click', () => {
+    document.getElementById('service-modal').style.display = 'none';
+  });
+  document.getElementById('service-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+  });
+
+  // ---- filter event listeners ----
+  ['filter-type','filter-status'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+  document.getElementById('filter-search').addEventListener('input', applyFilters);
+  document.getElementById('refresh-services').addEventListener('click', loadServices);
+
+  // ---- toast helper ----
+  function showToast(msg, type) {
+    const t = document.createElement('div');
+    t.className = 'toast toast-' + (type || 'info');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.classList.add('toast-visible'), 50);
+    setTimeout(() => { t.classList.remove('toast-visible'); setTimeout(() => t.remove(), 400); }, 3500);
+  }
+
+  loadServices();
+  setInterval(loadServices, 30000);
+})();
+</script>
+{% endblock %}

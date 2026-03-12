@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-wrap">
+
+  <!-- Filter bar -->
+  <section class="filter-bar card">
+    <div class="filter-group">
+      <label class="filter-label" for="filter-severity">Severity</label>
+      <select class="filter-select" id="filter-severity">
+        <option value="">All</option>
+        <option value="info">Info</option>
+        <option value="warning">Warning</option>
+        <option value="error">Error</option>
+        <option value="critical">Critical</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="filter-service">Service</label>
+      <select class="filter-select" id="filter-service">
+        <option value="">All Services</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="filter-source">Source</label>
+      <select class="filter-select" id="filter-source">
+        <option value="">All Sources</option>
+        <option value="log_watcher">Log Watcher</option>
+        <option value="metric_collector">Metric Collector</option>
+        <option value="anomaly_detector">Anomaly Detector</option>
+        <option value="user">User</option>
+        <option value="system">System</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="filter-date-from">From</label>
+      <input class="filter-input" type="datetime-local" id="filter-date-from" />
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="filter-date-to">To</label>
+      <input class="filter-input" type="datetime-local" id="filter-date-to" />
+    </div>
+    <div class="filter-group filter-group-btns">
+      <button class="btn btn-primary" id="apply-filters">Apply</button>
+      <button class="btn btn-secondary" id="clear-filters">Clear</button>
+    </div>
+    <div class="filter-group autorefresh-group">
+      <label class="toggle-label">
+        <input type="checkbox" id="autorefresh-toggle" class="toggle-check" />
+        <span class="toggle-slider"></span>
+        <span class="toggle-text">Auto-refresh</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- Timeline -->
+  <section class="section-block">
+    <div class="section-header">
+      <h2 class="section-title">Event Timeline</h2>
+      <span class="result-count" id="event-count">Loading…</span>
+    </div>
+    <div id="events-timeline">
+      <div class="loading-state">
+        <span class="spinner"></span> Loading events…
+      </div>
+    </div>
+    <div class="pagination-bar" id="pagination-bar" style="display:none">
+      <button class="btn btn-secondary" id="prev-page" disabled>&#8249; Prev</button>
+      <span id="page-indicator">Page 1</span>
+      <button class="btn btn-secondary" id="next-page">Next &#8250;</button>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initEvents() {
+  const PAGE_SIZE = 25;
+  let currentPage = 0;
+  let autoRefreshTimer = null;
+  let totalCount = 0;
+
+  // ---- helpers ----
+  function severityClass(s) {
+    switch (s) {
+      case 'critical': return 'sev-critical';
+      case 'error':    return 'sev-error';
+      case 'warning':  return 'sev-warning';
+      default:         return 'sev-info';
+    }
+  }
+  function fmtDate(iso) {
+    return new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+  }
+  function relTime(iso) {
+    const delta = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (delta < 60) return delta + 's ago';
+    if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
+    if (delta < 86400) return Math.floor(delta / 3600) + 'h ago';
+    return Math.floor(delta / 86400) + 'd ago';
+  }
+
+  // ---- build query params ----
+  function buildParams() {
+    const params = new URLSearchParams();
+    const sev = document.getElementById('filter-severity').value;
+    const svc = document.getElementById('filter-service').value;
+    const src = document.getElementById('filter-source').value;
+    const from = document.getElementById('filter-date-from').value;
+    const to   = document.getElementById('filter-date-to').value;
+    if (sev) params.set('severity', sev);
+    if (svc) params.set('service', svc);
+    if (src) params.set('source', src);
+    if (from) params.set('from', new Date(from).toISOString());
+    if (to)   params.set('to', new Date(to).toISOString());
+    params.set('limit', PAGE_SIZE);
+    params.set('offset', currentPage * PAGE_SIZE);
+    return params.toString();
+  }
+
+  // ---- load events ----
+  function loadEvents() {
+    const timeline = document.getElementById('events-timeline');
+    timeline.innerHTML = '<div class="loading-state"><span class="spinner"></span> Loading events…</div>';
+    fetchAPI('/api/events?' + buildParams()).then(data => {
+      if (!data) { timeline.innerHTML = '<div class="empty-state error-text">API unavailable.</div>'; return; }
+      const events = data.events || [];
+      totalCount = data.total || events.length;
+      document.getElementById('event-count').textContent = totalCount + ' event' + (totalCount !== 1 ? 's' : '');
+
+      if (events.length === 0) {
+        timeline.innerHTML = '<div class="empty-state">No events match the current filters.</div>';
+        document.getElementById('pagination-bar').style.display = 'none';
+        return;
+      }
+
+      timeline.innerHTML = events.map(ev => `
+        <div class="event-card ${severityClass(ev.severity)}">
+          <div class="event-card-left">
+            <span class="sev-badge ${severityClass(ev.severity)}">${escHtml(ev.severity)}</span>
+          </div>
+          <div class="event-card-body">
+            <div class="event-card-msg">${escHtml(ev.message)}</div>
+            <div class="event-card-meta">
+              ${ev.service_name ? '<span class="meta-chip">' + escHtml(ev.service_name) + '</span>' : ''}
+              <span class="meta-chip">${escHtml(ev.source)}</span>
+              <span class="meta-time" title="${escHtml(fmtDate(ev.timestamp))}">${relTime(ev.timestamp)}</span>
+            </div>
+            ${Object.keys(ev.details || {}).length > 0 ? `
+              <details class="event-details">
+                <summary>Details</summary>
+                <pre class="event-details-pre">${escHtml(JSON.stringify(ev.details, null, 2))}</pre>
+              </details>
+            ` : ''}
+          </div>
+          <div class="event-card-right">
+            <span class="event-full-time">${fmtDate(ev.timestamp)}</span>
+          </div>
+        </div>
+      `).join('');
+
+      // Pagination
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+      const bar = document.getElementById('pagination-bar');
+      if (totalPages > 1) {
+        bar.style.display = 'flex';
+        document.getElementById('page-indicator').textContent =
+          'Page ' + (currentPage + 1) + ' of ' + totalPages;
+        document.getElementById('prev-page').disabled = currentPage === 0;
+        document.getElementById('next-page').disabled = currentPage >= totalPages - 1;
+      } else {
+        bar.style.display = 'none';
+      }
+    }).catch(() => {
+      timeline.innerHTML = '<div class="empty-state error-text">Failed to load events.</div>';
+    });
+  }
+
+  // ---- populate service dropdown ----
+  function populateServiceFilter() {
+    fetchAPI('/api/services').then(data => {
+      if (!data || !data.services) return;
+      const sel = document.getElementById('filter-service');
+      data.services.forEach(svc => {
+        const opt = document.createElement('option');
+        opt.value = svc.name;
+        opt.textContent = svc.display_name || svc.name;
+        sel.appendChild(opt);
+      });
+    }).catch(() => {});
+  }
+
+  // ---- pagination ----
+  document.getElementById('prev-page').addEventListener('click', () => {
+    if (currentPage > 0) { currentPage--; loadEvents(); }
+  });
+  document.getElementById('next-page').addEventListener('click', () => {
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+    if (currentPage < totalPages - 1) { currentPage++; loadEvents(); }
+  });
+
+  // ---- filters ----
+  document.getElementById('apply-filters').addEventListener('click', () => {
+    currentPage = 0;
+    loadEvents();
+  });
+  document.getElementById('clear-filters').addEventListener('click', () => {
+    document.getElementById('filter-severity').value = '';
+    document.getElementById('filter-service').value = '';
+    document.getElementById('filter-source').value = '';
+    document.getElementById('filter-date-from').value = '';
+    document.getElementById('filter-date-to').value = '';
+    currentPage = 0;
+    loadEvents();
+  });
+
+  // ---- auto-refresh ----
+  document.getElementById('autorefresh-toggle').addEventListener('change', function() {
+    if (this.checked) {
+      autoRefreshTimer = setInterval(loadEvents, 10000);
+    } else {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+  });
+
+  // ---- init ----
+  populateServiceFilter();
+  loadEvents();
+})();
+</script>
+{% endblock %}

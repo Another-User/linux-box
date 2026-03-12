@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OptAware — {{ title }}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* Critical layout styles inlined for zero-FOUC */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { display: flex; min-height: 100vh; background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-sans); }
+    #sidebar { width: var(--sidebar-width); flex-shrink: 0; background: var(--bg-sidebar); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; transition: transform 0.25s ease; }
+    #main-wrap { margin-left: var(--sidebar-width); flex: 1; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.25s ease; }
+    @media (max-width: 768px) {
+      #sidebar { transform: translateX(-100%); }
+      #sidebar.open { transform: translateX(0); }
+      #main-wrap { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== SIDEBAR ===== -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">
+      <span class="logo-icon">&#9670;</span>
+      <span class="logo-text">OptAware</span>
+    </div>
+    <div class="hostname">{{ hostname }}</div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a href="/dashboard" class="nav-item {% if page == 'dashboard' %}active{% endif %}">
+      <span class="nav-icon">&#9632;</span>
+      <span class="nav-label">Dashboard</span>
+    </a>
+    <a href="/services" class="nav-item {% if page == 'services' %}active{% endif %}">
+      <span class="nav-icon">&#9670;</span>
+      <span class="nav-label">Services</span>
+    </a>
+    <a href="/events" class="nav-item {% if page == 'events' %}active{% endif %}">
+      <span class="nav-icon">&#9650;</span>
+      <span class="nav-label">Events</span>
+    </a>
+    <a href="/actions" class="nav-item {% if page == 'actions' %}active{% endif %}">
+      <span class="nav-icon">&#9654;</span>
+      <span class="nav-label">Actions</span>
+    </a>
+    <a href="/ask" class="nav-item {% if page == 'ask' %}active{% endif %}">
+      <span class="nav-icon">&#9679;</span>
+      <span class="nav-label">Ask</span>
+    </a>
+    <a href="/settings" class="nav-item {% if page == 'settings' %}active{% endif %}">
+      <span class="nav-icon">&#9881;</span>
+      <span class="nav-label">Settings</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="agent-status">
+      <span class="status-dot running" id="agent-status-dot"></span>
+      <span class="agent-status-label" id="agent-status-label">Agent Online</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ===== MAIN CONTENT ===== -->
+<div id="main-wrap">
+
+  <!-- Header -->
+  <header class="topbar">
+    <button class="menu-toggle" id="menu-toggle" aria-label="Toggle sidebar">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="topbar-title">{{ title }}</div>
+    <div class="topbar-actions">
+      <div class="alert-badge" id="alert-count-badge" title="Active alerts">
+        <span class="badge-icon">&#9888;</span>
+        <span class="badge-count" id="alert-count">0</span>
+      </div>
+      <div class="topbar-time" id="topbar-time"></div>
+    </div>
+  </header>
+
+  <!-- Page content -->
+  <main class="page-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer class="page-footer">
+    <span>OptAware v{{ version }}</span>
+    <span class="footer-sep">&bull;</span>
+    <span id="footer-uptime"></span>
+    <span class="footer-sep">&bull;</span>
+    <span>{{ hostname }}</span>
+  </footer>
+
+</div>
+
+<!-- Overlay for mobile sidebar -->
+<div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+<script src="/static/app.js"></script>
+<script>
+  // Sidebar toggle
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  const menuBtn = document.getElementById('menu-toggle');
+
+  function openSidebar() {
+    sidebar.classList.add('open');
+    overlay.classList.add('visible');
+  }
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('visible');
+  }
+
+  menuBtn.addEventListener('click', () => sidebar.classList.contains('open') ? closeSidebar() : openSidebar());
+  overlay.addEventListener('click', closeSidebar);
+
+  // Live clock
+  function updateClock() {
+    const el = document.getElementById('topbar-time');
+    if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // Footer uptime placeholder — populated by app.js when API responds
+  (function checkAgentStatus() {
+    fetchAPI('/api/health').then(data => {
+      const dot = document.getElementById('agent-status-dot');
+      const lbl = document.getElementById('agent-status-label');
+      const up  = document.getElementById('footer-uptime');
+      if (data && data.status === 'ok') {
+        dot.className = 'status-dot running';
+        lbl.textContent = 'Agent Online';
+        if (data.uptime) up.textContent = 'Uptime: ' + data.uptime;
+      } else {
+        dot.className = 'status-dot stopped';
+        lbl.textContent = 'Agent Offline';
+      }
+    }).catch(() => {
+      document.getElementById('agent-status-dot').className = 'status-dot stopped';
+      document.getElementById('agent-status-label').textContent = 'Agent Offline';
+    });
+  })();
+
+  // Alert badge
+  fetchAPI('/api/events?severity=critical&limit=50').then(data => {
+    if (data && data.events) {
+      const cnt = data.events.length;
+      const badge = document.getElementById('alert-count');
+      if (badge) {
+        badge.textContent = cnt;
+        const wrapper = document.getElementById('alert-count-badge');
+        if (cnt > 0) wrapper.classList.add('has-alerts');
+      }
+    }
+  }).catch(() => {});
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

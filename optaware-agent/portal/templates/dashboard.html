@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-wrap">
+
+  <!-- Quick stats bar -->
+  <section class="quick-stats" id="quick-stats">
+    <div class="stat-chip">
+      <span class="stat-chip-label">Total Services</span>
+      <span class="stat-chip-value" id="qs-total-services">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">Running</span>
+      <span class="stat-chip-value green" id="qs-running">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">Stopped</span>
+      <span class="stat-chip-value red" id="qs-stopped">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">Active Alerts</span>
+      <span class="stat-chip-value yellow" id="qs-alerts">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">Pending Actions</span>
+      <span class="stat-chip-value accent" id="qs-pending-actions">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">Uptime</span>
+      <span class="stat-chip-value" id="qs-uptime">—</span>
+    </div>
+  </section>
+
+  <!-- System metrics row -->
+  <section class="section-block">
+    <h2 class="section-title">System Overview</h2>
+    <div class="metrics-grid">
+
+      <div class="metric-card" id="metric-cpu">
+        <div class="metric-header">
+          <span class="metric-label">CPU Usage</span>
+          <span class="metric-icon cpu-icon">&#9670;</span>
+        </div>
+        <div class="metric-value" id="cpu-value">—</div>
+        <div class="metric-bar-track">
+          <div class="metric-bar" id="cpu-bar" style="width:0%"></div>
+        </div>
+        <div class="metric-sub" id="cpu-cores">— cores</div>
+      </div>
+
+      <div class="metric-card" id="metric-memory">
+        <div class="metric-header">
+          <span class="metric-label">Memory Usage</span>
+          <span class="metric-icon mem-icon">&#9632;</span>
+        </div>
+        <div class="metric-value" id="mem-value">—</div>
+        <div class="metric-bar-track">
+          <div class="metric-bar" id="mem-bar" style="width:0%"></div>
+        </div>
+        <div class="metric-sub" id="mem-detail">— / —</div>
+      </div>
+
+      <div class="metric-card" id="metric-disk">
+        <div class="metric-header">
+          <span class="metric-label">Disk Usage</span>
+          <span class="metric-icon disk-icon">&#9650;</span>
+        </div>
+        <div class="metric-value" id="disk-value">—</div>
+        <div class="metric-bar-track">
+          <div class="metric-bar" id="disk-bar" style="width:0%"></div>
+        </div>
+        <div class="metric-sub" id="disk-detail">— / —</div>
+      </div>
+
+      <div class="metric-card" id="metric-network">
+        <div class="metric-header">
+          <span class="metric-label">Network I/O</span>
+          <span class="metric-icon net-icon">&#8644;</span>
+        </div>
+        <div class="metric-value net-io">
+          <span class="net-up" id="net-tx">&#8593; —</span>
+          <span class="net-down" id="net-rx">&#8595; —</span>
+        </div>
+        <div class="metric-sub" id="net-iface">interface —</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Two-column middle row: Services + Events -->
+  <div class="dashboard-mid">
+
+    <!-- Service status grid -->
+    <section class="section-block services-section">
+      <div class="section-header">
+        <h2 class="section-title">Services</h2>
+        <a href="/services" class="section-link">View all &rsaquo;</a>
+      </div>
+      <div class="service-grid" id="service-grid">
+        <div class="placeholder-row">Loading services…</div>
+      </div>
+    </section>
+
+    <!-- Recent events -->
+    <section class="section-block events-section">
+      <div class="section-header">
+        <h2 class="section-title">Recent Events</h2>
+        <a href="/events" class="section-link">View all &rsaquo;</a>
+      </div>
+      <div class="events-list" id="recent-events">
+        <div class="placeholder-row">Loading events…</div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Pending actions -->
+  <section class="section-block">
+    <div class="section-header">
+      <h2 class="section-title">Pending Actions</h2>
+      <a href="/actions" class="section-link">View all &rsaquo;</a>
+    </div>
+    <div id="pending-actions-list">
+      <div class="placeholder-row">Loading actions…</div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initDashboard() {
+
+  // ---- helpers ----
+  function pct(v) { return typeof v === 'number' ? v.toFixed(1) + '%' : '—'; }
+  function bytes(b) {
+    if (b == null) return '—';
+    const u = ['B','KB','MB','GB','TB'];
+    let i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(1) + ' ' + u[i];
+  }
+  function setBar(id, pctVal) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const clamped = Math.min(100, Math.max(0, pctVal || 0));
+    el.style.width = clamped + '%';
+    el.classList.remove('bar-low','bar-mid','bar-high');
+    if (clamped > 85) el.classList.add('bar-high');
+    else if (clamped > 60) el.classList.add('bar-mid');
+    else el.classList.add('bar-low');
+  }
+  function statusClass(s) {
+    switch (s) {
+      case 'running': return 'green';
+      case 'stopped': return 'red';
+      case 'degraded': return 'yellow';
+      default: return 'grey';
+    }
+  }
+  function severityClass(s) {
+    switch (s) {
+      case 'critical': return 'sev-critical';
+      case 'error':    return 'sev-error';
+      case 'warning':  return 'sev-warning';
+      default:         return 'sev-info';
+    }
+  }
+  function relTime(iso) {
+    const delta = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (delta < 60) return delta + 's ago';
+    if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
+    if (delta < 86400) return Math.floor(delta / 3600) + 'h ago';
+    return Math.floor(delta / 86400) + 'd ago';
+  }
+
+  // ---- metrics ----
+  function loadMetrics() {
+    fetchAPI('/api/metrics').then(data => {
+      if (!data) return;
+      const cpu = data.cpu_percent;
+      document.getElementById('cpu-value').textContent = pct(cpu);
+      setBar('cpu-bar', cpu);
+      document.getElementById('cpu-cores').textContent = (data.cpu_count || '—') + ' cores';
+
+      const memPct = data.memory_percent;
+      document.getElementById('mem-value').textContent = pct(memPct);
+      setBar('mem-bar', memPct);
+      document.getElementById('mem-detail').textContent =
+        bytes(data.memory_used) + ' / ' + bytes(data.memory_total);
+
+      const diskPct = data.disk_percent;
+      document.getElementById('disk-value').textContent = pct(diskPct);
+      setBar('disk-bar', diskPct);
+      document.getElementById('disk-detail').textContent =
+        bytes(data.disk_used) + ' / ' + bytes(data.disk_total);
+
+      document.getElementById('net-tx').textContent = '&#8593; ' + bytes(data.net_bytes_sent) + '/s';
+      document.getElementById('net-rx').textContent = '&#8595; ' + bytes(data.net_bytes_recv) + '/s';
+      if (data.net_interface) document.getElementById('net-iface').textContent = data.net_interface;
+    }).catch(() => {});
+  }
+
+  // ---- quick stats ----
+  function loadQuickStats() {
+    Promise.all([
+      fetchAPI('/api/services'),
+      fetchAPI('/api/events?severity=critical&limit=50'),
+      fetchAPI('/api/actions?status=pending'),
+      fetchAPI('/api/health'),
+    ]).then(([svcData, evtData, actData, healthData]) => {
+      const services = (svcData && svcData.services) || [];
+      const running = services.filter(s => s.status === 'running').length;
+      const stopped = services.filter(s => s.status === 'stopped').length;
+      document.getElementById('qs-total-services').textContent = services.length;
+      document.getElementById('qs-running').textContent = running;
+      document.getElementById('qs-stopped').textContent = stopped;
+      document.getElementById('qs-alerts').textContent =
+        (evtData && evtData.events) ? evtData.events.length : 0;
+      document.getElementById('qs-pending-actions').textContent =
+        (actData && actData.actions) ? actData.actions.length : 0;
+      if (healthData && healthData.uptime)
+        document.getElementById('qs-uptime').textContent = healthData.uptime;
+    }).catch(() => {});
+  }
+
+  // ---- services ----
+  function loadServices() {
+    fetchAPI('/api/services').then(data => {
+      const grid = document.getElementById('service-grid');
+      if (!data || !data.services || data.services.length === 0) {
+        grid.innerHTML = '<div class="empty-state">No services registered.</div>';
+        return;
+      }
+      grid.innerHTML = data.services.slice(0, 12).map(svc => `
+        <div class="svc-chip">
+          <span class="status-dot ${statusClass(svc.status)}"></span>
+          <span class="svc-chip-name">${escHtml(svc.display_name || svc.name)}</span>
+          <span class="badge badge-${statusClass(svc.status)}">${escHtml(svc.status)}</span>
+        </div>
+      `).join('');
+    }).catch(() => {
+      document.getElementById('service-grid').innerHTML =
+        '<div class="empty-state error-text">Failed to load services.</div>';
+    });
+  }
+
+  // ---- recent events ----
+  function loadRecentEvents() {
+    fetchAPI('/api/events?limit=10').then(data => {
+      const list = document.getElementById('recent-events');
+      if (!data || !data.events || data.events.length === 0) {
+        list.innerHTML = '<div class="empty-state">No recent events.</div>';
+        return;
+      }
+      list.innerHTML = data.events.map(ev => `
+        <div class="event-row ${severityClass(ev.severity)}">
+          <span class="event-sev-dot"></span>
+          <div class="event-row-body">
+            <span class="event-msg">${escHtml(ev.message)}</span>
+            <span class="event-meta">${escHtml(ev.service_name || ev.source)} &bull; ${relTime(ev.timestamp)}</span>
+          </div>
+        </div>
+      `).join('');
+    }).catch(() => {
+      document.getElementById('recent-events').innerHTML =
+        '<div class="empty-state error-text">Failed to load events.</div>';
+    });
+  }
+
+  // ---- pending actions ----
+  function loadPendingActions() {
+    fetchAPI('/api/actions?status=pending').then(data => {
+      const container = document.getElementById('pending-actions-list');
+      if (!data || !data.actions || data.actions.length === 0) {
+        container.innerHTML = '<div class="empty-state">No pending actions.</div>';
+        return;
+      }
+      container.innerHTML = data.actions.map(act => `
+        <div class="action-row" id="action-${escHtml(act.id)}">
+          <div class="action-row-info">
+            <span class="action-type-badge">${escHtml(act.action_type)}</span>
+            <span class="action-desc">${escHtml(act.steps && act.steps[0] ? act.steps[0].description : act.action_type)}</span>
+          </div>
+          <div class="action-row-btns">
+            <button class="btn btn-approve" onclick="approveAction('${escHtml(act.id)}')">Approve</button>
+            <button class="btn btn-deny"    onclick="denyAction('${escHtml(act.id)}')">Deny</button>
+          </div>
+        </div>
+      `).join('');
+    }).catch(() => {
+      document.getElementById('pending-actions-list').innerHTML =
+        '<div class="empty-state error-text">Failed to load actions.</div>';
+    });
+  }
+
+  // ---- init ----
+  loadMetrics();
+  loadQuickStats();
+  loadServices();
+  loadRecentEvents();
+  loadPendingActions();
+
+  // Auto-refresh every 30s
+  setInterval(() => {
+    loadMetrics();
+    loadQuickStats();
+    loadServices();
+    loadRecentEvents();
+    loadPendingActions();
+  }, 30000);
+
+})();
+</script>
+{% endblock %}

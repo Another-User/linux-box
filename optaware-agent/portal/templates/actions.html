@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-wrap">
+
+  <!-- Pending Actions -->
+  <section class="section-block">
+    <div class="section-header">
+      <h2 class="section-title">Pending Actions</h2>
+      <span class="result-count" id="pending-count">Loading…</span>
+    </div>
+    <div id="pending-actions">
+      <div class="loading-state"><span class="spinner"></span> Loading…</div>
+    </div>
+  </section>
+
+  <!-- Action History -->
+  <section class="section-block">
+    <div class="section-header">
+      <h2 class="section-title">Action History</h2>
+      <div class="header-controls">
+        <select class="filter-select" id="history-status-filter">
+          <option value="">All Statuses</option>
+          <option value="approved">Approved</option>
+          <option value="executing">Executing</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="rolled_back">Rolled Back</option>
+        </select>
+        <button class="btn btn-secondary" id="refresh-history">&#8635; Refresh</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="history-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Completed</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="6" class="table-placeholder">Loading history…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<!-- Action detail modal -->
+<div class="modal-overlay" id="action-modal" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 class="modal-title" id="modal-title">Action Details</h3>
+      <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initActions() {
+
+  // ---- helpers ----
+  function statusClass(s) {
+    switch (s) {
+      case 'completed': return 'green';
+      case 'failed':    return 'red';
+      case 'executing': return 'yellow';
+      case 'approved':  return 'accent';
+      case 'rolled_back': return 'grey';
+      default: return 'grey';
+    }
+  }
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+  }
+  function relTime(iso) {
+    if (!iso) return '—';
+    const delta = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (delta < 60) return delta + 's ago';
+    if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
+    return Math.floor(delta / 3600) + 'h ago';
+  }
+  function stepStatusIcon(i, total) {
+    return '(' + i + '/' + total + ')';
+  }
+
+  // ---- pending actions ----
+  function loadPending() {
+    fetchAPI('/api/actions?status=pending').then(data => {
+      const container = document.getElementById('pending-actions');
+      const actions = (data && data.actions) || [];
+      document.getElementById('pending-count').textContent =
+        actions.length + ' pending';
+
+      if (actions.length === 0) {
+        container.innerHTML = '<div class="empty-state">No actions awaiting approval.</div>';
+        return;
+      }
+
+      container.innerHTML = actions.map(act => {
+        const firstStep = act.steps && act.steps[0];
+        const desc = firstStep ? firstStep.description : act.action_type;
+        return `
+          <div class="pending-card" id="pending-${escHtml(act.id)}">
+            <div class="pending-card-header">
+              <span class="action-type-badge">${escHtml(act.action_type)}</span>
+              <span class="pending-created">Created ${relTime(act.created_at)}</span>
+            </div>
+            <div class="pending-card-desc">${escHtml(desc)}</div>
+            ${act.steps && act.steps.length > 1 ? `
+              <details class="steps-detail">
+                <summary>${act.steps.length} steps — click to expand</summary>
+                <ol class="steps-list">
+                  ${act.steps.map(s => `
+                    <li class="step-item">
+                      <span class="step-desc">${escHtml(s.description)}</span>
+                      ${s.command ? '<code class="step-cmd">' + escHtml(s.command) + '</code>' : ''}
+                      ${s.expected_outcome ? '<span class="step-outcome">Expected: ' + escHtml(s.expected_outcome) + '</span>' : ''}
+                    </li>
+                  `).join('')}
+                </ol>
+              </details>
+            ` : (act.steps && act.steps[0] && act.steps[0].command ? `
+              <code class="pending-cmd">${escHtml(act.steps[0].command)}</code>
+            ` : '')}
+            <div class="pending-card-actions">
+              <button class="btn btn-approve" onclick="approveAction('${escHtml(act.id)}', this)">
+                &#10003; Approve
+              </button>
+              <button class="btn btn-deny" onclick="denyAction('${escHtml(act.id)}', this)">
+                &#10007; Deny
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }).catch(() => {
+      document.getElementById('pending-actions').innerHTML =
+        '<div class="empty-state error-text">Failed to load pending actions.</div>';
+    });
+  }
+
+  // ---- history ----
+  function loadHistory() {
+    const statusFilter = document.getElementById('history-status-filter').value;
+    const url = '/api/actions' + (statusFilter ? '?status=' + statusFilter : '');
+    fetchAPI(url).then(data => {
+      const tbody = document.getElementById('history-tbody');
+      const actions = (data && data.actions) || [];
+      const nonPending = actions.filter(a => a.status !== 'pending');
+
+      if (nonPending.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="table-placeholder">No historical actions found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = nonPending.map(act => {
+        const firstStep = act.steps && act.steps[0];
+        const desc = firstStep ? firstStep.description : act.action_type;
+        return `
+          <tr>
+            <td><span class="action-type-badge small">${escHtml(act.action_type)}</span></td>
+            <td class="desc-cell">${escHtml(desc)}</td>
+            <td><span class="badge badge-${statusClass(act.status)}">${escHtml(act.status)}</span></td>
+            <td class="time-cell">${fmtDate(act.created_at)}</td>
+            <td class="time-cell">${fmtDate(act.completed_at)}</td>
+            <td>
+              ${act.steps && act.steps.length > 0 ? `
+                <button class="btn btn-xs btn-secondary" onclick="showActionDetail(${escHtml(JSON.stringify(act))})">
+                  View
+                </button>
+              ` : '—'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }).catch(() => {
+      document.getElementById('history-tbody').innerHTML =
+        '<tr><td colspan="6" class="table-placeholder error-text">Failed to load history.</td></tr>';
+    });
+  }
+
+  // ---- modal ----
+  window.showActionDetail = function(act) {
+    document.getElementById('modal-title').textContent =
+      'Action: ' + act.action_type + ' — ' + act.status;
+
+    const steps = (act.steps || []).map((s, i) => `
+      <div class="step-detail-item">
+        <div class="step-detail-header">
+          <span class="step-number">Step ${s.step_number}</span>
+          <span class="step-detail-desc">${escHtml(s.description)}</span>
+        </div>
+        ${s.command ? '<div class="step-detail-row"><span class="step-detail-label">Command:</span><code class="step-cmd">' + escHtml(s.command) + '</code></div>' : ''}
+        ${s.expected_outcome ? '<div class="step-detail-row"><span class="step-detail-label">Expected:</span><span>' + escHtml(s.expected_outcome) + '</span></div>' : ''}
+        ${s.rollback_command ? '<div class="step-detail-row"><span class="step-detail-label">Rollback:</span><code class="step-cmd">' + escHtml(s.rollback_command) + '</code></div>' : ''}
+      </div>
+    `).join('');
+
+    const result = act.result
+      ? '<div class="section-block"><h4>Result</h4><pre class="event-details-pre">' + escHtml(JSON.stringify(act.result, null, 2)) + '</pre></div>'
+      : '';
+
+    document.getElementById('modal-body').innerHTML = `
+      <div class="modal-meta">
+        <span><strong>Created:</strong> ${fmtDate(act.created_at)}</span>
+        <span><strong>Started:</strong> ${fmtDate(act.started_at)}</span>
+        <span><strong>Completed:</strong> ${fmtDate(act.completed_at)}</span>
+        <span><strong>Requires Approval:</strong> ${act.requires_approval ? 'Yes' : 'No'}</span>
+      </div>
+      <h4 class="modal-steps-title">Steps (${(act.steps || []).length})</h4>
+      <div class="steps-detail-list">${steps}</div>
+      ${result}
+    `;
+
+    document.getElementById('action-modal').style.display = 'flex';
+  };
+
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('action-modal').style.display = 'none';
+  });
+  document.getElementById('action-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+  });
+
+  // ---- filter change ----
+  document.getElementById('history-status-filter').addEventListener('change', loadHistory);
+  document.getElementById('refresh-history').addEventListener('click', loadHistory);
+
+  // ---- expose approve/deny globally (used by dashboard too) ----
+  window.approveAction = function(id, btn) {
+    if (!confirm('Approve this action?')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+    fetchAPI('/api/actions/' + id + '/approve', { method: 'POST' }).then(() => {
+      const card = document.getElementById('pending-' + id);
+      if (card) card.remove();
+      loadPending();
+      loadHistory();
+    }).catch(() => {
+      alert('Failed to approve action.');
+      if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
+    });
+  };
+  window.denyAction = function(id, btn) {
+    if (!confirm('Deny this action? It will be removed from the queue.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Denying…'; }
+    fetchAPI('/api/actions/' + id + '/deny', { method: 'POST' }).then(() => {
+      const card = document.getElementById('pending-' + id);
+      if (card) card.remove();
+      loadPending();
+      loadHistory();
+    }).catch(() => {
+      alert('Failed to deny action.');
+      if (btn) { btn.disabled = false; btn.textContent = '✗ Deny'; }
+    });
+  };
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+  }
+
+  // ---- init ----
+  loadPending();
+  loadHistory();
+  setInterval(loadPending, 30000);
+})();
+</script>
+{% endblock %}

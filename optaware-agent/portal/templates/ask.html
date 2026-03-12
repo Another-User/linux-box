@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="chat-page">
+
+  <div class="chat-container">
+
+    <div class="chat-header">
+      <div class="chat-header-info">
+        <span class="chat-avatar">&#9670;</span>
+        <div>
+          <div class="chat-title">Ask OptAware</div>
+          <div class="chat-subtitle" id="chat-status">AI-powered server management assistant</div>
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="clear-chat">Clear</button>
+    </div>
+
+    <!-- Message list -->
+    <div class="chat-messages" id="chat-messages">
+      <!-- Welcome message -->
+      <div class="msg-row msg-assistant">
+        <div class="msg-avatar">&#9670;</div>
+        <div class="msg-bubble">
+          <p>Hello! I'm OptAware, your AI-powered Linux server management assistant.</p>
+          <p>You can ask me about:</p>
+          <ul>
+            <li>Service status and diagnostics</li>
+            <li>System performance and metrics</li>
+            <li>Recent events and alerts</li>
+            <li>Remediation actions and recommendations</li>
+            <li>Configuration and best practices</li>
+          </ul>
+          <p>What would you like to know?</p>
+          <div class="msg-time">Now</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Suggested questions -->
+    <div class="chat-suggestions" id="chat-suggestions">
+      <button class="suggestion-chip" data-q="What is the current system status?">System status?</button>
+      <button class="suggestion-chip" data-q="Which services are currently stopped or degraded?">Stopped services?</button>
+      <button class="suggestion-chip" data-q="Show me the most recent critical events.">Recent critical events?</button>
+      <button class="suggestion-chip" data-q="What actions are pending approval?">Pending actions?</button>
+      <button class="suggestion-chip" data-q="Is CPU or memory usage high right now?">Resource usage?</button>
+    </div>
+
+    <!-- Input area -->
+    <form class="chat-input-bar" id="chat-form" autocomplete="off">
+      <textarea
+        class="chat-input"
+        id="chat-input"
+        placeholder="Ask OptAware anything about your server…"
+        rows="1"
+        maxlength="2000"
+      ></textarea>
+      <button type="submit" class="chat-send-btn" id="chat-send" aria-label="Send message">
+        <span class="send-icon">&#9654;</span>
+      </button>
+    </form>
+
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function initChat() {
+  const messagesEl = document.getElementById('chat-messages');
+  const inputEl    = document.getElementById('chat-input');
+  const formEl     = document.getElementById('chat-form');
+  const sendBtn    = document.getElementById('chat-send');
+  const statusEl   = document.getElementById('chat-status');
+  const suggestEl  = document.getElementById('chat-suggestions');
+
+  let sessionHistory = [];
+
+  // ---- helpers ----
+  function fmtTime() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function scrollToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function appendMessage(role, html, timeStr) {
+    const row = document.createElement('div');
+    row.className = 'msg-row msg-' + role;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'msg-avatar';
+    avatar.innerHTML = role === 'assistant' ? '&#9670;' : '&#9679;';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.innerHTML = html + '<div class="msg-time">' + (timeStr || fmtTime()) + '</div>';
+
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    return row;
+  }
+
+  function appendTypingIndicator() {
+    const row = document.createElement('div');
+    row.className = 'msg-row msg-assistant';
+    row.id = 'typing-indicator';
+    row.innerHTML = `
+      <div class="msg-avatar">&#9670;</div>
+      <div class="msg-bubble typing-bubble">
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
+      </div>
+    `;
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    return row;
+  }
+
+  function removeTypingIndicator() {
+    const el = document.getElementById('typing-indicator');
+    if (el) el.remove();
+  }
+
+  function renderMarkdown(text) {
+    // Basic markdown-ish rendering without external deps
+    return escHtml(text)
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+      .replace(/\n{2,}/g, '</p><p>')
+      .replace(/\n/g, '<br>')
+      .replace(/^/, '<p>')
+      .replace(/$/, '</p>');
+  }
+
+  function setInputDisabled(disabled) {
+    inputEl.disabled = disabled;
+    sendBtn.disabled = disabled;
+    if (disabled) {
+      sendBtn.innerHTML = '<span class="spinner-sm"></span>';
+    } else {
+      sendBtn.innerHTML = '<span class="send-icon">&#9654;</span>';
+    }
+  }
+
+  // ---- auto-resize textarea ----
+  inputEl.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+  });
+
+  // ---- send message ----
+  async function sendMessage(question) {
+    const q = question.trim();
+    if (!q) return;
+
+    // Hide suggestions after first interaction
+    suggestEl.style.display = 'none';
+
+    // Append user message
+    appendMessage('user', '<p>' + escHtml(q) + '</p>');
+    sessionHistory.push({ role: 'user', content: q });
+
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    setInputDisabled(true);
+    setStatus('OptAware is thinking…');
+
+    const typingRow = appendTypingIndicator();
+
+    try {
+      const response = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          history: sessionHistory.slice(-10),
+        }),
+      });
+
+      removeTypingIndicator();
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => 'Unknown error');
+        appendMessage('assistant',
+          '<p class="error-text">Request failed (' + response.status + '): ' + escHtml(errText) + '</p>');
+        setStatus('AI-powered server management assistant');
+        setInputDisabled(false);
+        return;
+      }
+
+      const data = await response.json();
+      const answer = (data && data.answer) ? data.answer : '(No response)';
+      sessionHistory.push({ role: 'assistant', content: answer });
+
+      appendMessage('assistant', renderMarkdown(answer));
+      setStatus('AI-powered server management assistant');
+
+    } catch (err) {
+      removeTypingIndicator();
+      appendMessage('assistant',
+        '<p class="error-text">Network error: ' + escHtml(err.message || String(err)) + '</p>');
+      setStatus('AI-powered server management assistant');
+    }
+
+    setInputDisabled(false);
+    inputEl.focus();
+  }
+
+  // ---- form submit ----
+  formEl.addEventListener('submit', function(e) {
+    e.preventDefault();
+    sendMessage(inputEl.value);
+  });
+
+  // ---- Enter to send (Shift+Enter for newline) ----
+  inputEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(this.value);
+    }
+  });
+
+  // ---- suggestion chips ----
+  document.querySelectorAll('.suggestion-chip').forEach(btn => {
+    btn.addEventListener('click', function() {
+      sendMessage(this.dataset.q);
+    });
+  });
+
+  // ---- clear chat ----
+  document.getElementById('clear-chat').addEventListener('click', function() {
+    sessionHistory = [];
+    messagesEl.innerHTML = '';
+    suggestEl.style.display = 'flex';
+    appendMessage('assistant',
+      '<p>Chat cleared. How can I help you?</p>');
+  });
+
+  inputEl.focus();
+})();
+</script>
+{% endblock %}

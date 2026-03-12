@@ -223,8 +223,6 @@ class AnthropicProvider(LLMProvider):
 
         async def _call() -> str:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = client.post(self._API_URL, json=payload, headers=headers)
-                # httpx streams; await the actual send
                 resp = await client.post(self._API_URL, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
@@ -237,21 +235,7 @@ class AnthropicProvider(LLMProvider):
                 ]
                 return "\n".join(texts)
 
-        # Avoid double-request: rewrite without the erroneous first call
-        async def _call_clean() -> str:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(self._API_URL, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                content_blocks = data.get("content", [])
-                texts = [
-                    block["text"]
-                    for block in content_blocks
-                    if block.get("type") == "text"
-                ]
-                return "\n".join(texts)
-
-        result: str = await _with_retries(_call_clean, retries=self._retries)
+        result: str = await _with_retries(_call, retries=self._retries)
         return result
 
 
