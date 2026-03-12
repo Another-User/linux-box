@@ -260,6 +260,81 @@ class KnowledgeSearchResponse(BaseModel):
     total: int = 0
 
 
+class GPUInfoModel(BaseModel):
+    vendor: str = ""
+    name: str = ""
+    vram_mb: int = 0
+    driver: str = ""
+    index: int = 0
+
+
+class LocalServiceModel(BaseModel):
+    name: str = ""
+    url: str = ""
+    models: list[str] = Field(default_factory=list)
+    running: bool = False
+
+
+class LLMStatusResponse(BaseModel):
+    """Hardware detection + LLM provider readiness."""
+
+    gpus: list[GPUInfoModel] = Field(default_factory=list)
+    local_services: list[LocalServiceModel] = Field(default_factory=list)
+    cpu_cores: int = 0
+    ram_mb: int = 0
+    has_gpu: bool = False
+    total_vram_mb: int = 0
+    recommended_provider: str = ""
+    recommended_model: str = ""
+    recommendation_reason: str = ""
+    active_provider: Optional[str] = None
+    active_model: Optional[str] = None
+    provider_source: str = ""
+
+
+class LLMConfigUpdateRequest(BaseModel):
+    """Body for PATCH /api/llm/config."""
+
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    cost_limit_daily: Optional[float] = None
+    local_url: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    fallback_api_key: Optional[str] = None
+
+
+class LLMConfigUpdateResponse(BaseModel):
+    success: bool
+    message: str
+    updated_fields: list[str] = Field(default_factory=list)
+
+
+class AuthLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class AuthLoginResponse(BaseModel):
+    success: bool
+    token: Optional[str] = None
+    username: str = ""
+    display_name: str = ""
+    message: str = ""
+    expires_minutes: int = 0
+
+
+class AuthStatusResponse(BaseModel):
+    ldap_enabled: bool = False
+    ldap_server: str = ""
+    ldap_reachable: Optional[bool] = None
+    ldap3_installed: bool = False
+    api_key_configured: bool = False
+    auth_mode: str = "api_key"
+
+
 class ConfigValidateResponse(BaseModel):
     valid: bool
     errors: list[str] = Field(default_factory=list)
@@ -896,6 +971,283 @@ async def search_knowledge(
     except Exception as exc:
         logger.warning("knowledge/search: %s", exc)
         return KnowledgeSearchResponse(query=q, results=[], total=0)
+
+
+# -- LLM Status / Config -----------------------------------------------------
+
+
+@app.get(
+    "/api/llm/status",
+    response_model=LLMStatusResponse,
+    summary="Hardware detection and LLM provider readiness",
+    tags=["LLM"],
+)
+async def llm_status(_: str = Depends(_auth)) -> LLMStatusResponse:
+    """Return detected hardware, local LLM services, and the active provider."""
+    try:
+        from cognition.provider_resolver import get_hardware_profile, get_provider_status  # noqa: PLC0415
+
+        profile = get_hardware_profile()
+        prov_status = get_provider_status()
+
+        gpu_models = [
+            GPUInfoModel(
+                vendor=g.vendor, name=g.name, vram_mb=g.vram_mb,
+                driver=g.driver, index=g.index,
+            )
+            for g in profile.gpus
+        ]
+        svc_models = [
+            LocalServiceModel(
+                name=s.name, url=s.url, models=s.models, running=s.running,
+            )
+            for s in profile.local_services
+        ]
+
+        active_repr = prov_status.get("cached_provider", "") or ""
+        active_provider = ""
+        active_model = ""
+        if "AnthropicProvider" in active_repr:
+            active_provider = "anthropic"
+        elif "OpenAIProvider" in active_repr:
+            active_provider = "openai"
+        elif "LocalProvider" in active_repr:
+            active_provider = "local"
+
+        # Extract model from repr like "AnthropicProvider(model='claude-sonnet-4-5')"
+        if "model=" in active_repr:
+            start = active_repr.index("model=") + 7
+            end = active_repr.index("'", start)
+            active_model = active_repr[start:end]
+
+        # Determine how the provider was selected
+        provider_source = "not resolved"
+        if active_provider:
+            try:
+                from config.loader import get_config as _get_cfg  # noqa: PLC0415
+                cfg = _get_cfg()
+                if cfg.llm.provider == "auto":
+                    provider_source = "auto-detected"
+                else:
+                    provider_source = "explicit config"
+            except Exception:
+                provider_source = "unknown"
+
+        return LLMStatusResponse(
+            gpus=gpu_models,
+            local_services=svc_models,
+            cpu_cores=profile.cpu_cores,
+            ram_mb=profile.ram_mb,
+            has_gpu=profile.has_gpu,
+            total_vram_mb=profile.total_vram_mb,
+            recommended_provider=profile.recommended_provider,
+            recommended_model=profile.recommended_model,
+            recommendation_reason=profile.recommendation_reason,
+            active_provider=active_provider,
+            active_model=active_model,
+            provider_source=provider_source,
+        )
+
+    except Exception as exc:
+        logger.warning("llm_status: %s", exc)
+        return LLMStatusResponse(recommendation_reason=f"Error: {exc}")
+
+
+@app.patch(
+    "/api/llm/config",
+    response_model=LLMConfigUpdateResponse,
+    summary="Update LLM provider configuration",
+    tags=["LLM"],
+)
+async def update_llm_config(
+    body: LLMConfigUpdateRequest,
+    _: str = Depends(_auth),
+) -> LLMConfigUpdateResponse:
+    """Update LLM configuration fields and trigger provider re-resolution."""
+    try:
+        from config.loader import get_config as _get_cfg  # noqa: PLC0415
+
+        cfg = _get_cfg()
+        updated: list[str] = []
+
+        field_map = {
+            "provider": body.provider,
+            "model": body.model,
+            "api_key": body.api_key,
+            "max_tokens": body.max_tokens,
+            "temperature": body.temperature,
+            "cost_limit_daily": body.cost_limit_daily,
+            "local_url": body.local_url,
+            "fallback_provider": body.fallback_provider,
+            "fallback_api_key": body.fallback_api_key,
+        }
+
+        for field_name, value in field_map.items():
+            if value is not None:
+                setattr(cfg.llm, field_name, value)
+                updated.append(field_name)
+
+        # Invalidate cached provider so next LLM call re-resolves
+        if updated:
+            try:
+                from cognition import provider_resolver  # noqa: PLC0415
+                provider_resolver._cached_provider = None
+                provider_resolver._cached_profile = None
+            except Exception:
+                pass
+
+        return LLMConfigUpdateResponse(
+            success=True,
+            message=f"Updated {len(updated)} field(s). Provider will re-resolve on next LLM call.",
+            updated_fields=updated,
+        )
+    except Exception as exc:
+        logger.exception("update_llm_config error")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(
+    "/api/llm/redetect",
+    response_model=LLMStatusResponse,
+    summary="Re-run hardware detection",
+    tags=["LLM"],
+)
+async def redetect_hardware(_: str = Depends(_auth)) -> LLMStatusResponse:
+    """Force a fresh hardware detection scan and return updated status."""
+    try:
+        from cognition.provider_resolver import get_hardware_profile  # noqa: PLC0415
+
+        # Force refresh
+        profile = get_hardware_profile(force_refresh=True)
+
+        gpu_models = [
+            GPUInfoModel(
+                vendor=g.vendor, name=g.name, vram_mb=g.vram_mb,
+                driver=g.driver, index=g.index,
+            )
+            for g in profile.gpus
+        ]
+        svc_models = [
+            LocalServiceModel(
+                name=s.name, url=s.url, models=s.models, running=s.running,
+            )
+            for s in profile.local_services
+        ]
+
+        return LLMStatusResponse(
+            gpus=gpu_models,
+            local_services=svc_models,
+            cpu_cores=profile.cpu_cores,
+            ram_mb=profile.ram_mb,
+            has_gpu=profile.has_gpu,
+            total_vram_mb=profile.total_vram_mb,
+            recommended_provider=profile.recommended_provider,
+            recommended_model=profile.recommended_model,
+            recommendation_reason=profile.recommendation_reason,
+            provider_source="re-detected",
+        )
+    except Exception as exc:
+        logger.warning("redetect_hardware: %s", exc)
+        return LLMStatusResponse(recommendation_reason=f"Error: {exc}")
+
+
+# -- Authentication ----------------------------------------------------------
+
+
+@app.get(
+    "/api/auth/status",
+    response_model=AuthStatusResponse,
+    summary="Authentication status",
+    tags=["Authentication"],
+)
+async def auth_status() -> AuthStatusResponse:
+    """Return current authentication configuration (no auth required)."""
+    from cli.auth import _resolve_secret  # noqa: PLC0415
+
+    api_key_set = bool(_resolve_secret())
+
+    ldap_enabled = False
+    ldap_server = ""
+    ldap_reachable = None
+    ldap3_installed = False
+
+    try:
+        from cli.ldap_auth import get_ldap_status, is_ldap_enabled  # noqa: PLC0415
+
+        ldap_enabled = is_ldap_enabled()
+        if ldap_enabled:
+            st = get_ldap_status()
+            ldap_server = st.get("server", "")
+            ldap_reachable = st.get("reachable")
+            ldap3_installed = st.get("ldap3_installed", False)
+    except Exception:
+        pass
+
+    auth_mode = "ldap" if ldap_enabled else "api_key"
+
+    return AuthStatusResponse(
+        ldap_enabled=ldap_enabled,
+        ldap_server=ldap_server,
+        ldap_reachable=ldap_reachable,
+        ldap3_installed=ldap3_installed,
+        api_key_configured=api_key_set,
+        auth_mode=auth_mode,
+    )
+
+
+@app.post(
+    "/api/auth/login",
+    response_model=AuthLoginResponse,
+    summary="Login with LDAP credentials",
+    tags=["Authentication"],
+)
+async def auth_login(body: AuthLoginRequest) -> AuthLoginResponse:
+    """Authenticate via OpenLDAP and return a JWT session token."""
+    try:
+        from cli.ldap_auth import LDAPAuthError, LDAPNotAvailable, authenticate  # noqa: PLC0415
+    except ImportError:
+        raise HTTPException(status_code=501, detail="LDAP module not available.")
+
+    try:
+        from config.loader import get_config as _get_cfg  # noqa: PLC0415
+        cfg = _get_cfg()
+        expiry = cfg.auth.session_expiry_minutes if hasattr(cfg, "auth") else 480
+    except Exception:
+        expiry = 480
+
+    try:
+        user = authenticate(body.username, body.password)
+    except LDAPNotAvailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except LDAPAuthError as exc:
+        return AuthLoginResponse(
+            success=False,
+            username=body.username,
+            message=str(exc),
+        )
+
+    # Issue JWT
+    from cli.auth import create_token  # noqa: PLC0415
+
+    token = create_token(
+        {
+            "sub": user.username,
+            "dn": user.dn,
+            "display_name": user.display_name,
+            "email": user.email,
+            "groups": list(user.groups),
+        },
+        expires_minutes=expiry,
+    )
+
+    return AuthLoginResponse(
+        success=True,
+        token=token,
+        username=user.username,
+        display_name=user.display_name,
+        message="Authentication successful.",
+        expires_minutes=expiry,
+    )
 
 
 # -- Config ------------------------------------------------------------------

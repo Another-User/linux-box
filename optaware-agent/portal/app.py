@@ -94,3 +94,7 @@ def setup_portal(app: FastAPI) -> None:
     async def services(request: Request) -> HTMLResponse:
         ctx = _ctx(request, "services", "Services")
         return templates.TemplateResponse("services.html", ctx)
+
+    @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse("login.html", {"request": request})

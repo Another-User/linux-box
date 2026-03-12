@@ -1497,3 +1497,96 @@ img { max-width: 100%; display: block; }
   .quick-stats { flex-direction: column; }
   .stat-chip { flex-direction: row; justify-content: space-between; align-items: center; }
 }
+
+/* ============================================================
+   HARDWARE STATUS & AUTH PANELS (Settings page)
+   ============================================================ */
+.settings-hw-section,
+.settings-auth-section {
+  grid-column: 1 / -1;
+}
+
+.hw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.hw-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.hw-card-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.hw-card-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.hw-card-value.green { color: var(--green); }
+.hw-card-value.yellow { color: var(--yellow); }
+.hw-card-value.grey { color: var(--grey); }
+.hw-card-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.hw-recommendation {
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: var(--blue-bg);
+  border: 1px solid rgba(52, 152, 219, 0.2);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.hw-recommendation strong {
+  color: var(--blue);
+}
+
+/* Auth info grid */
+.auth-info-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+}
+.auth-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auth-info-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.auth-info-value {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+/* Dashboard LLM chip */
+.llm-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.llm-status-chip.active { border-color: var(--green); color: var(--green); }
+.llm-status-chip.inactive { border-color: var(--yellow); color: var(--yellow); }

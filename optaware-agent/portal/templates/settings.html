@@ -5,6 +5,25 @@
 
   <div class="settings-layout">
 
+    <!-- Hardware & LLM Readiness -->
+    <section class="section-block settings-hw-section">
+      <div class="section-header">
+        <h2 class="section-title">Hardware &amp; LLM Readiness</h2>
+        <button type="button" class="btn btn-secondary btn-sm" id="redetect-btn">Re-detect Hardware</button>
+      </div>
+      <div id="hw-status-panel">
+        <div class="loading-state"><span class="spinner"></span> Detecting hardware…</div>
+      </div>
+    </section>
+
+    <!-- Authentication Status -->
+    <section class="section-block settings-auth-section">
+      <h2 class="section-title">Authentication</h2>
+      <div id="auth-status-panel">
+        <div class="loading-state"><span class="spinner"></span> Checking auth…</div>
+      </div>
+    </section>
+
     <!-- Left column: Config display -->
     <section class="section-block settings-readonly-section">
       <h2 class="section-title">Current Configuration</h2>
@@ -28,16 +47,24 @@
           <div class="form-row">
             <label class="form-label" for="llm-provider">Provider</label>
             <select class="form-select" id="llm-provider" name="llm.provider">
+              <option value="auto">Auto-detect (recommended)</option>
               <option value="anthropic">Anthropic (Claude)</option>
               <option value="openai">OpenAI (GPT)</option>
-              <option value="local">Local (Ollama)</option>
+              <option value="local">Local (Ollama / vLLM)</option>
             </select>
+            <span class="form-hint" id="provider-hint"></span>
           </div>
 
           <div class="form-row">
             <label class="form-label" for="llm-model">Model</label>
             <input class="form-input" type="text" id="llm-model" name="llm.model"
-              placeholder="e.g. claude-opus-4-5 or gpt-4o" />
+              placeholder="e.g. claude-opus-4-5 or gpt-4o (blank = auto)" />
+          </div>
+
+          <div class="form-row" id="local-url-row" style="display:none">
+            <label class="form-label" for="llm-local-url">Local Server URL</label>
+            <input class="form-input" type="text" id="llm-local-url" name="llm.local_url"
+              placeholder="http://localhost:11434" />
           </div>
 
           <div class="form-row">
@@ -165,23 +192,183 @@
 <script>
 (function initSettings() {
 
+  // ---- hardware status ----
+  function loadHardwareStatus(endpoint) {
+    endpoint = endpoint || '/api/llm/status';
+    const panel = document.getElementById('hw-status-panel');
+    fetchAPI(endpoint).then(data => {
+      if (!data) {
+        panel.innerHTML = '<div class="empty-state error-text">Could not load hardware status.</div>';
+        return;
+      }
+
+      let html = '<div class="hw-grid">';
+
+      // Active provider
+      html += '<div class="hw-card">';
+      html += '<div class="hw-card-label">Active Provider</div>';
+      if (data.active_provider) {
+        html += '<div class="hw-card-value green">' + escHtml(data.active_provider) + '</div>';
+        html += '<div class="hw-card-sub">' + escHtml(data.active_model || 'default model') + '</div>';
+        html += '<div class="hw-card-sub">' + escHtml(data.provider_source) + '</div>';
+      } else {
+        html += '<div class="hw-card-value yellow">Not resolved</div>';
+        html += '<div class="hw-card-sub">Provider will resolve on first LLM call</div>';
+      }
+      html += '</div>';
+
+      // GPUs
+      html += '<div class="hw-card">';
+      html += '<div class="hw-card-label">GPUs Detected</div>';
+      if (data.gpus && data.gpus.length > 0) {
+        html += '<div class="hw-card-value green">' + data.gpus.length + '</div>';
+        data.gpus.forEach(function(g) {
+          html += '<div class="hw-card-sub">' + escHtml(g.name) + ' (' + g.vram_mb + ' MiB)</div>';
+        });
+        html += '<div class="hw-card-sub">Total VRAM: ' + data.total_vram_mb + ' MiB</div>';
+      } else {
+        html += '<div class="hw-card-value grey">None</div>';
+        html += '<div class="hw-card-sub">No GPU / AI accelerator detected</div>';
+      }
+      html += '</div>';
+
+      // Local LLM services
+      html += '<div class="hw-card">';
+      html += '<div class="hw-card-label">Local LLM Services</div>';
+      if (data.local_services && data.local_services.length > 0) {
+        html += '<div class="hw-card-value green">' + data.local_services.length + '</div>';
+        data.local_services.forEach(function(s) {
+          var status = s.running ? 'running' : 'stopped';
+          html += '<div class="hw-card-sub">' + escHtml(s.name) + ' at ' + escHtml(s.url);
+          html += ' <span class="badge badge-' + (s.running ? 'green' : 'red') + '">' + status + '</span>';
+          if (s.models && s.models.length > 0) {
+            html += ' (' + s.models.length + ' model' + (s.models.length > 1 ? 's' : '') + ')';
+          }
+          html += '</div>';
+        });
+      } else {
+        html += '<div class="hw-card-value grey">None</div>';
+        html += '<div class="hw-card-sub">No local LLM service detected</div>';
+      }
+      html += '</div>';
+
+      // System
+      html += '<div class="hw-card">';
+      html += '<div class="hw-card-label">System</div>';
+      html += '<div class="hw-card-value">' + data.cpu_cores + ' cores</div>';
+      html += '<div class="hw-card-sub">' + Math.round(data.ram_mb / 1024) + ' GB RAM</div>';
+      html += '</div>';
+
+      html += '</div>'; // hw-grid
+
+      // Recommendation
+      if (data.recommendation_reason) {
+        html += '<div class="hw-recommendation">';
+        html += '<strong>Recommendation:</strong> ' + escHtml(data.recommendation_reason);
+        html += '</div>';
+      }
+
+      panel.innerHTML = html;
+    }).catch(function() {
+      panel.innerHTML = '<div class="empty-state error-text">Failed to load hardware status.</div>';
+    });
+  }
+
+  // Re-detect button
+  document.getElementById('redetect-btn').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Detecting…';
+    document.getElementById('hw-status-panel').innerHTML =
+      '<div class="loading-state"><span class="spinner"></span> Re-scanning hardware…</div>';
+
+    fetchAPI('/api/llm/redetect', { method: 'POST' }).then(function(data) {
+      if (data) {
+        // Repopulate from the returned data directly
+        loadHardwareStatus('/api/llm/status');
+      }
+    }).catch(function() {}).finally(function() {
+      btn.disabled = false;
+      btn.textContent = 'Re-detect Hardware';
+    });
+  });
+
+  // ---- auth status ----
+  function loadAuthStatus() {
+    var panel = document.getElementById('auth-status-panel');
+    fetchAPI('/api/auth/status').then(function(data) {
+      if (!data) {
+        panel.innerHTML = '<div class="empty-state error-text">Could not load auth status.</div>';
+        return;
+      }
+      var html = '<div class="auth-info-grid">';
+
+      html += '<div class="auth-info-item">';
+      html += '<span class="auth-info-label">Mode</span>';
+      html += '<span class="auth-info-value">' + escHtml(data.auth_mode) + '</span>';
+      html += '</div>';
+
+      html += '<div class="auth-info-item">';
+      html += '<span class="auth-info-label">API Key</span>';
+      html += '<span class="auth-info-value">' + (data.api_key_configured ? '<span class="green">Configured</span>' : '<span class="yellow">Not set (dev mode)</span>') + '</span>';
+      html += '</div>';
+
+      html += '<div class="auth-info-item">';
+      html += '<span class="auth-info-label">LDAP</span>';
+      if (data.ldap_enabled) {
+        var reachTxt = data.ldap_reachable === true ? '<span class="green">reachable</span>'
+                     : data.ldap_reachable === false ? '<span class="red">unreachable</span>'
+                     : '<span class="grey">unknown</span>';
+        html += '<span class="auth-info-value"><span class="green">Enabled</span> — ' + escHtml(data.ldap_server) + ' (' + reachTxt + ')</span>';
+      } else {
+        html += '<span class="auth-info-value grey">Disabled</span>';
+      }
+      html += '</div>';
+
+      if (data.ldap_enabled && !data.ldap3_installed) {
+        html += '<div class="auth-info-item">';
+        html += '<span class="auth-info-label"></span>';
+        html += '<span class="auth-info-value red">ldap3 library not installed — run: pip install ldap3</span>';
+        html += '</div>';
+      }
+
+      html += '</div>';
+      panel.innerHTML = html;
+    }).catch(function() {
+      panel.innerHTML = '<div class="empty-state error-text">Failed to load auth status.</div>';
+    });
+  }
+
+  // ---- provider selector logic ----
+  var providerSelect = document.getElementById('llm-provider');
+  providerSelect.addEventListener('change', function() {
+    var localRow = document.getElementById('local-url-row');
+    localRow.style.display = this.value === 'local' ? 'block' : 'none';
+    var hint = document.getElementById('provider-hint');
+    if (this.value === 'auto') {
+      hint.textContent = 'OptAware will detect hardware and choose the best provider automatically.';
+    } else {
+      hint.textContent = '';
+    }
+  });
+
   // ---- populate config display ----
   function loadCurrentConfig() {
-    const display = document.getElementById('current-config-display');
-    fetchAPI('/api/config').then(data => {
+    var display = document.getElementById('current-config-display');
+    fetchAPI('/api/config').then(function(data) {
       if (!data) { display.innerHTML = '<div class="empty-state error-text">Could not load config.</div>'; return; }
 
       // Redact sensitive fields
       function redact(obj, path) {
         if (typeof obj !== 'object' || obj === null) return obj;
-        const result = {};
-        for (const [k, v] of Object.entries(obj)) {
-          const fullPath = path ? path + '.' + k : k;
-          const sensitiveKeys = ['api_key', 'secret_key', 'password', 'token'];
-          if (sensitiveKeys.some(s => k.includes(s)) && v) {
+        var result = {};
+        for (var _i = 0, _a = Object.entries(obj); _i < _a.length; _i++) {
+          var k = _a[_i][0], v = _a[_i][1];
+          var sensitiveKeys = ['api_key', 'secret_key', 'password', 'token', 'signing_secret'];
+          if (sensitiveKeys.some(function(s) { return k.includes(s); }) && v) {
             result[k] = '***REDACTED***';
           } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-            result[k] = redact(v, fullPath);
+            result[k] = redact(v, (path ? path + '.' + k : k));
           } else {
             result[k] = v;
           }
@@ -189,7 +376,7 @@
         return result;
       }
 
-      const redacted = redact(data);
+      var redacted = redact(data, '');
       display.innerHTML = '<pre class="config-pre">' + escHtml(JSON.stringify(redacted, null, 2)) + '</pre>';
 
       // Populate editable fields
@@ -200,6 +387,15 @@
         setVal('llm-temperature', data.llm.temperature);
         document.getElementById('temp-display').textContent = data.llm.temperature;
         setVal('cost-limit', data.llm.cost_limit_daily);
+        if (data.llm.local_url) setVal('llm-local-url', data.llm.local_url);
+        // Show local URL row if provider is local
+        document.getElementById('local-url-row').style.display =
+          data.llm.provider === 'local' ? 'block' : 'none';
+        // Show hint for auto
+        if (data.llm.provider === 'auto') {
+          document.getElementById('provider-hint').textContent =
+            'OptAware will detect hardware and choose the best provider automatically.';
+        }
       }
       if (data.planning) {
         setVal('approval-mode', data.planning.approval_mode);
@@ -212,52 +408,61 @@
         document.getElementById('sensitivity-display').textContent = data.perception.anomaly_sensitivity;
         setCheck('log-watch', data.perception.log_watch_enabled);
       }
-    }).catch(() => {
+    }).catch(function() {
       display.innerHTML = '<div class="empty-state error-text">Failed to load configuration.</div>';
     });
   }
 
   function setVal(id, val) {
-    const el = document.getElementById(id);
+    var el = document.getElementById(id);
     if (el && val !== undefined && val !== null) el.value = val;
   }
   function setCheck(id, val) {
-    const el = document.getElementById(id);
+    var el = document.getElementById(id);
     if (el) el.checked = !!val;
   }
 
   // ---- approval mode warning ----
   document.getElementById('approval-mode').addEventListener('change', function() {
-    const warn = document.getElementById('auto-mode-warning');
+    var warn = document.getElementById('auto-mode-warning');
     warn.style.display = this.value === 'auto' ? 'block' : 'none';
   });
 
   // ---- API key visibility toggle ----
   document.getElementById('toggle-apikey').addEventListener('click', function() {
-    const inp = document.getElementById('llm-api-key');
+    var inp = document.getElementById('llm-api-key');
     inp.type = inp.type === 'password' ? 'text' : 'password';
     this.textContent = inp.type === 'password' ? '\u{1F441}' : '\u{1F576}';
   });
 
-  // ---- form submit ----
+  // ---- form submit — use PATCH /api/llm/config for LLM fields ----
   document.getElementById('settings-form').addEventListener('submit', function(e) {
     e.preventDefault();
-    const saveBtn    = document.getElementById('save-btn');
-    const saveStatus = document.getElementById('save-status');
+    var saveBtn    = document.getElementById('save-btn');
+    var saveStatus = document.getElementById('save-status');
 
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     saveStatus.textContent = '';
     saveStatus.className = 'save-status';
 
-    const payload = {
-      llm: {
-        provider:         document.getElementById('llm-provider').value,
-        model:            document.getElementById('llm-model').value,
-        max_tokens:       parseInt(document.getElementById('llm-max-tokens').value) || undefined,
-        temperature:      parseFloat(document.getElementById('llm-temperature').value),
-        cost_limit_daily: parseFloat(document.getElementById('cost-limit').value) || undefined,
-      },
+    // LLM config update via dedicated endpoint
+    var llmPayload = {
+      provider:         document.getElementById('llm-provider').value,
+      model:            document.getElementById('llm-model').value || null,
+      max_tokens:       parseInt(document.getElementById('llm-max-tokens').value) || null,
+      temperature:      parseFloat(document.getElementById('llm-temperature').value),
+      cost_limit_daily: parseFloat(document.getElementById('cost-limit').value) || null,
+    };
+    var localUrl = document.getElementById('llm-local-url').value.trim();
+    if (localUrl) llmPayload.local_url = localUrl;
+
+    var apiKey = document.getElementById('llm-api-key').value.trim();
+    if (apiKey) llmPayload.api_key = apiKey;
+
+    // General config for non-LLM fields
+    var generalPayload = {
+      llm: llmPayload,
       planning: {
         approval_mode:        document.getElementById('approval-mode').value,
         dry_run_default:      document.getElementById('dry-run').checked,
@@ -270,31 +475,36 @@
       },
     };
 
-    // Include API key only if the user typed one
-    const apiKey = document.getElementById('llm-api-key').value.trim();
-    if (apiKey) payload.llm.api_key = apiKey;
-
-    // Remove undefined
-    function stripUndefined(obj) {
-      return JSON.parse(JSON.stringify(obj, (_, v) => v === undefined ? undefined : v));
+    // Remove null/undefined
+    function stripEmpty(obj) {
+      return JSON.parse(JSON.stringify(obj, function(_, v) { return v === undefined ? undefined : v; }));
     }
 
-    fetchAPI('/api/config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(stripUndefined(payload)),
-    }).then(data => {
+    // Send LLM config via dedicated endpoint, general config via PATCH /api/config
+    Promise.all([
+      fetchAPI('/api/llm/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripEmpty(llmPayload)),
+      }),
+      fetchAPI('/api/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripEmpty(generalPayload)),
+      }),
+    ]).then(function() {
       saveStatus.textContent = 'Settings saved successfully.';
       saveStatus.className = 'save-status save-ok';
       document.getElementById('llm-api-key').value = '';
       loadCurrentConfig();
-    }).catch(() => {
+      loadHardwareStatus();
+    }).catch(function() {
       saveStatus.textContent = 'Failed to save settings. Check the API.';
       saveStatus.className = 'save-status save-err';
-    }).finally(() => {
+    }).finally(function() {
       saveBtn.disabled = false;
       saveBtn.textContent = 'Save Settings';
-      setTimeout(() => { saveStatus.textContent = ''; saveStatus.className = 'save-status'; }, 5000);
+      setTimeout(function() { saveStatus.textContent = ''; saveStatus.className = 'save-status'; }, 5000);
     });
   });
 
@@ -302,17 +512,21 @@
   document.getElementById('reset-btn').addEventListener('click', function() {
     if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
     fetchAPI('/api/config/reset', { method: 'POST' })
-      .then(() => {
+      .then(function() {
         document.getElementById('save-status').textContent = 'Reset to defaults.';
         document.getElementById('save-status').className = 'save-status save-ok';
         loadCurrentConfig();
+        loadHardwareStatus();
       })
-      .catch(() => {
+      .catch(function() {
         document.getElementById('save-status').textContent = 'Reset failed.';
         document.getElementById('save-status').className = 'save-status save-err';
       });
   });
 
+  // ---- init ----
+  loadHardwareStatus();
+  loadAuthStatus();
   loadCurrentConfig();
 })();
 </script>

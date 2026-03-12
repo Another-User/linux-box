@@ -9,6 +9,109 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Phase 13 — Portal LLM Status Panel & OpenLDAP Authentication
+
+This phase adds hardware/LLM readiness visibility in the web portal and
+OpenLDAP authentication support, allowing enterprise environments to use
+existing LDAP directories for portal access control.
+
+#### Added
+
+**LDAP authentication** (`cli/ldap_auth.py`)
+
+- `authenticate(username, password)` — LDAP simple bind against a
+  configured OpenLDAP server.  Fetches user attributes (displayName,
+  mail) and group memberships (memberOf and posixGroup styles).
+  Returns an `LDAPUser` dataclass on success.
+
+- `is_ldap_enabled()` — check whether LDAP auth is configured.
+
+- `get_ldap_status()` — returns LDAP config status and connectivity
+  for the portal status panel.  Includes ldap3 library detection and
+  a quick server reachability test.
+
+- Requires the `ldap3` library (optional dependency).  Graceful
+  `LDAPNotAvailable` exception when not installed.
+
+**API endpoints**
+
+- `GET /api/llm/status` — returns detected GPUs, local LLM services,
+  system info (CPU cores, RAM), active provider/model, recommended
+  provider, and provider source (auto-detected vs explicit config).
+
+- `PATCH /api/llm/config` — update LLM provider settings (provider,
+  model, API key, max_tokens, temperature, local_url, etc.).
+  Invalidates the cached provider so the next LLM call re-resolves.
+
+- `POST /api/llm/redetect` — force a fresh hardware detection scan
+  and return updated status.
+
+- `GET /api/auth/status` — returns authentication configuration:
+  LDAP enabled/reachable, API key configured, auth mode.  No auth
+  required (used by the login page).
+
+- `POST /api/auth/login` — authenticate with LDAP credentials and
+  receive a JWT session token.
+
+**Portal UI**
+
+- Settings page: new "Hardware & LLM Readiness" panel showing
+  detected GPUs, local LLM services, system specs, active provider,
+  and recommendation.  Includes "Re-detect Hardware" button.
+
+- Settings page: new "Authentication" panel showing current auth
+  mode, API key status, LDAP server and reachability.
+
+- Settings page: LLM provider selector now includes "Auto-detect"
+  option.  Local URL field shown when "Local" provider is selected.
+
+- Dashboard: new "LLM Provider" stat chip showing active provider
+  and model with colour-coded status.
+
+- Login page (`/login`): standalone LDAP login form that stores
+  JWT in localStorage on success.
+
+**Configuration**
+
+- `config/schema.py` — new `AuthConfig` model with 13 LDAP fields
+  (server, port, SSL, base_dn, bind_dn_template, search filter,
+  group filter, required_group, CA cert, session expiry).
+
+- `config/defaults.py` — auth section defaults (LDAP disabled,
+  480-minute session expiry).
+
+#### Changed
+
+- `config/schema.py` — added `auth: AuthConfig` field to
+  `OptAwareConfig`.
+
+- `portal/templates/settings.html` — restructured into four
+  sections: hardware status, auth status, config display, and
+  editable settings.  LLM config now saved via `PATCH /api/llm/config`.
+
+- `portal/templates/dashboard.html` — added LLM provider stat chip
+  and `/api/llm/status` fetch to quick stats loader.
+
+- `portal/static/style.css` — added styles for hardware status
+  cards, auth info grid, and LLM status chip.
+
+- `portal/app.py` — added `/login` route.
+
+#### Technical notes
+
+- LDAP auth uses simple bind (not SASL).  The bind DN is templated
+  from the username: `uid={username},ou=users,{base_dn}`.
+- JWT tokens are signed with the same secret as the API key auth
+  (`portal.secret_key` or `OPTAWARE_API_KEY` env var).
+- The `ldap3` library is an optional dependency.  When not installed,
+  LDAP endpoints return HTTP 501 with an install instruction.
+- Hardware re-detection clears both the cached profile and cached
+  provider, so the next LLM call will re-resolve.
+- All new API endpoints are authenticated (except `/api/auth/status`
+  and `/api/auth/login` which must be publicly accessible).
+
+---
+
 ### Phase 12 — Hardware-Aware LLM Provider Auto-Detection
 
 This phase adds automatic detection of GPUs, AI accelerators, and local

@@ -29,6 +29,10 @@
       <span class="stat-chip-label">Uptime</span>
       <span class="stat-chip-value" id="qs-uptime">—</span>
     </div>
+    <div class="stat-chip">
+      <span class="stat-chip-label">LLM Provider</span>
+      <span class="stat-chip-value" id="qs-llm-provider">—</span>
+    </div>
   </section>
 
   <!-- System metrics row -->
@@ -209,7 +213,8 @@
       fetchAPI('/api/events?severity=critical&limit=50'),
       fetchAPI('/api/actions?status=pending'),
       fetchAPI('/api/health'),
-    ]).then(([svcData, evtData, actData, healthData]) => {
+      fetchAPI('/api/llm/status'),
+    ]).then(([svcData, evtData, actData, healthData, llmData]) => {
       const services = (svcData && svcData.services) || [];
       const running = services.filter(s => s.status === 'running').length;
       const stopped = services.filter(s => s.status === 'stopped').length;
@@ -222,6 +227,18 @@
         (actData && actData.actions) ? actData.actions.length : 0;
       if (healthData && healthData.uptime)
         document.getElementById('qs-uptime').textContent = healthData.uptime;
+      // LLM provider status
+      const llmEl = document.getElementById('qs-llm-provider');
+      if (llmData && llmData.active_provider) {
+        llmEl.textContent = llmData.active_provider + (llmData.active_model ? ' / ' + llmData.active_model : '');
+        llmEl.className = 'stat-chip-value green';
+      } else if (llmData && llmData.recommended_provider) {
+        llmEl.textContent = llmData.recommended_provider + ' (pending)';
+        llmEl.className = 'stat-chip-value yellow';
+      } else {
+        llmEl.textContent = 'Not configured';
+        llmEl.className = 'stat-chip-value red';
+      }
     }).catch(() => {});
   }
 

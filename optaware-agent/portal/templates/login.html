@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OptAware — Login</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg-primary); }
+    .login-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: var(--shadow-card);
+    }
+    .login-logo {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .login-logo .logo-icon { font-size: 32px; color: var(--highlight); }
+    .login-logo .logo-text { font-size: 22px; font-weight: 700; color: var(--text-primary); margin-left: 8px; }
+    .login-subtitle {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .login-form { display: flex; flex-direction: column; gap: 16px; }
+    .login-form .form-input {
+      padding: 12px 14px;
+      font-size: 14px;
+    }
+    .login-error {
+      background: var(--red-bg);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--red);
+      display: none;
+    }
+    .login-error.visible { display: block; }
+    .login-btn {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="logo-icon">&#9670;</span>
+      <span class="logo-text">OptAware</span>
+    </div>
+    <div class="login-subtitle">Sign in with your LDAP credentials</div>
+
+    <div class="login-error" id="login-error"></div>
+
+    <form class="login-form" id="login-form">
+      <input class="form-input" type="text" id="login-username" placeholder="Username" autocomplete="username" required autofocus />
+      <input class="form-input" type="password" id="login-password" placeholder="Password" autocomplete="current-password" required />
+      <button type="submit" class="btn btn-primary login-btn" id="login-btn">Sign In</button>
+    </form>
+  </div>
+
+  <script>
+  document.getElementById('login-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var btn = document.getElementById('login-btn');
+    var errBox = document.getElementById('login-error');
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    errBox.className = 'login-error';
+
+    var body = JSON.stringify({
+      username: document.getElementById('login-username').value,
+      password: document.getElementById('login-password').value,
+    });
+
+    fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.success && data.token) {
+        // Store JWT and redirect
+        localStorage.setItem('optaware_token', data.token);
+        localStorage.setItem('optaware_user', data.display_name || data.username);
+        window.location.href = '/dashboard';
+      } else {
+        errBox.textContent = data.message || 'Authentication failed.';
+        errBox.className = 'login-error visible';
+      }
+    })
+    .catch(function() {
+      errBox.textContent = 'Network error. Please try again.';
+      errBox.className = 'login-error visible';
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    });
+  });
+  </script>
+</body>
+</html>

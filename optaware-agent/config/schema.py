@@ -91,6 +91,31 @@ class PortalConfig(BaseModel):
     secret_key: str = ""
 
 
+class AuthConfig(BaseModel):
+    """Authentication configuration for the web portal.
+
+    Supports API key auth (always available) and optional OpenLDAP
+    authentication.  When LDAP is enabled, users log in with their
+    LDAP credentials and receive a JWT for subsequent requests.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    ldap_enabled: bool = False
+    ldap_server: str = "ldap://localhost"
+    ldap_port: int = Field(default=389, ge=1, le=65535)
+    ldap_use_ssl: bool = False
+    ldap_base_dn: str = ""
+    ldap_bind_dn_template: str = "uid={username},ou=users,{base_dn}"
+    ldap_search_base: str = ""
+    ldap_search_filter: str = "(uid={username})"
+    ldap_group_base: str = ""
+    ldap_group_filter: str = "(memberUid={username})"
+    ldap_required_group: str = ""
+    ldap_ca_cert_file: str = ""
+    session_expiry_minutes: int = Field(default=480, ge=1)
+
+
 class AgentRoleConfig(BaseModel):
     """Per-agent-role configuration."""
 
@@ -134,4 +159,5 @@ class OptAwareConfig(BaseModel):
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     portal: PortalConfig = Field(default_factory=PortalConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
