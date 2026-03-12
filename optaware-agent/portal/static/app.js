@@ -1,311 +1,282 @@
 /**
  * OptAware Portal — Client-side JavaScript
+ *
+ * Globals exposed:
+ *   fetchAPI(path, options?)     — authenticated fetch helper
+ *   escHtml(str)                 — HTML-escape a string
+ *   approveAction(id, btn?)      — approve a pending action
+ *   denyAction(id, btn?)         — deny a pending action
+ *   serviceAction(name, action, btn?) — trigger a service control action
+ *   showActionDetail(act)        — open action detail modal (set by actions page)
+ *   showServiceDetail(svc)       — open service detail modal (set by services page)
  */
 
-const API_BASE = '/api';
-let ws = null;
-let autoRefresh = null;
+'use strict';
 
-// --- API Helper ---
+/* ============================================================
+   API HELPER
+   ============================================================ */
 
+/**
+ * Fetch a portal API endpoint.
+ *
+ * @param {string} endpoint  - Full URL or path (e.g. '/api/services').
+ *                             Paths that start with '/' are used as-is.
+ * @param {RequestInit} [options] - Optional fetch init overrides.
+ * @returns {Promise<any|null>}  Parsed JSON or null on error.
+ */
 async function fetchAPI(endpoint, options = {}) {
-    const defaults = {
-        headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': localStorage.getItem('optaware_api_key') || '',
-        },
-    };
-    const config = { ...defaults, ...options, headers: { ...defaults.headers, ...options.headers } };
+  const url = endpoint.startsWith('http') ? endpoint : endpoint;
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
 
+  try {
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 204) return {};
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.warn('[OptAware] API', response.status, url, body);
+      return null;
+    }
+    const ct = response.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return await response.json();
+    return await response.text();
+  } catch (err) {
+    console.error('[OptAware] fetch error', url, err);
+    return null;
+  }
+}
+
+/* ============================================================
+   HTML ESCAPE
+   ============================================================ */
+
+/**
+ * Escape a string for safe insertion into HTML.
+ * @param {any} str
+ * @returns {string}
+ */
+function escHtml(str) {
+  if (str == null) return '';
+  const s = String(str);
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/* ============================================================
+   ACTION APPROVE / DENY  (global, used by dashboard + actions page)
+   ============================================================ */
+
+window.approveAction = async function(id, btn) {
+  if (!confirm('Approve this action?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+
+  const result = await fetchAPI('/api/actions/' + id + '/approve', { method: 'POST' });
+  if (result !== null) {
+    _showToast('Action approved.', 'success');
+    const card = document.getElementById('pending-' + id);
+    if (card) {
+      card.style.transition = 'opacity 0.3s';
+      card.style.opacity = '0';
+      setTimeout(() => card.remove(), 300);
+    }
+  } else {
+    _showToast('Failed to approve action.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
+  }
+};
+
+window.denyAction = async function(id, btn) {
+  if (!confirm('Deny this action? It will be removed from the queue.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Denying…'; }
+
+  const result = await fetchAPI('/api/actions/' + id + '/deny', { method: 'POST' });
+  if (result !== null) {
+    _showToast('Action denied.', 'info');
+    const card = document.getElementById('pending-' + id);
+    if (card) {
+      card.style.transition = 'opacity 0.3s';
+      card.style.opacity = '0';
+      setTimeout(() => card.remove(), 300);
+    }
+  } else {
+    _showToast('Failed to deny action.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✗ Deny'; }
+  }
+};
+
+/* ============================================================
+   SERVICE CONTROL  (global)
+   ============================================================ */
+
+window.serviceAction = async function(name, action, btn) {
+  const labels = { start: 'Starting', stop: 'Stopping', restart: 'Restarting', diagnose: 'Diagnosing' };
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = (labels[action] || action) + '…'; }
+
+  const result = await fetchAPI('/api/services/' + encodeURIComponent(name) + '/' + action, { method: 'POST' });
+  if (result !== null) {
+    const msg = (result && result.message) ? result.message : action + ' queued for ' + name;
+    _showToast(msg, 'success');
+  } else {
+    _showToast('Failed to ' + action + ' ' + name + '.', 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = origText; }
+};
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+
+function _showToast(msg, type) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + (type || 'info');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  // Trigger transition
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => el.classList.add('toast-visible'));
+  });
+  setTimeout(() => {
+    el.classList.remove('toast-visible');
+    setTimeout(() => el.remove(), 400);
+  }, 3500);
+}
+
+/* ============================================================
+   WEBSOCKET — real-time events
+   ============================================================ */
+
+(function initWebSocket() {
+  let ws = null;
+  let reconnectDelay = 3000;
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, config);
-        if (response.status === 401) {
-            showNotification('Authentication required. Set API key in Settings.', 'error');
-            return null;
-        }
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return await response.json();
-    } catch (err) {
-        console.error(`API error (${endpoint}):`, err);
-        showNotification(`API error: ${err.message}`, 'error');
-        return null;
-    }
-}
-
-// --- Notifications ---
-
-function showNotification(message, type = 'info') {
-    const container = document.getElementById('notifications') || createNotificationContainer();
-    const el = document.createElement('div');
-    el.className = `notification notification-${type}`;
-    el.textContent = message;
-    el.style.cssText = `
-        padding: 12px 16px; margin-bottom: 8px; border-radius: 8px; font-size: 0.9rem;
-        background: ${type === 'error' ? 'rgba(233,69,96,0.2)' : type === 'success' ? 'rgba(0,200,83,0.2)' : 'rgba(66,165,245,0.2)'};
-        color: ${type === 'error' ? '#e94560' : type === 'success' ? '#00c853' : '#42a5f5'};
-        border: 1px solid ${type === 'error' ? '#e94560' : type === 'success' ? '#00c853' : '#42a5f5'};
-        animation: fadeIn 0.3s ease;
-    `;
-    container.appendChild(el);
-    setTimeout(() => el.remove(), 5000);
-}
-
-function createNotificationContainer() {
-    const c = document.createElement('div');
-    c.id = 'notifications';
-    c.style.cssText = 'position: fixed; top: 70px; right: 20px; z-index: 1000; width: 350px;';
-    document.body.appendChild(c);
-    return c;
-}
-
-// --- Dashboard ---
-
-async function loadDashboard() {
-    const status = await fetchAPI('/status');
-    if (!status) return;
-
-    updateMetricCard('cpu', status.cpu_percent, '%');
-    updateMetricCard('memory', status.memory_percent, '%');
-    updateMetricCard('disk', status.disk_percent, '%');
-    updateMetricCard('services', status.services_running, ` / ${status.services_total}`);
-}
-
-function updateMetricCard(id, value, suffix = '') {
-    const el = document.getElementById(`metric-${id}`);
-    if (el) {
-        el.textContent = typeof value === 'number' ? value.toFixed(1) + suffix : value + suffix;
-        // Color coding
-        if (typeof value === 'number' && suffix === '%') {
-            el.style.color = value > 90 ? '#e94560' : value > 75 ? '#ffa726' : '#00c853';
-        }
-    }
-}
-
-function startAutoRefresh(interval = 30000) {
-    stopAutoRefresh();
-    loadDashboard();
-    autoRefresh = setInterval(loadDashboard, interval);
-}
-
-function stopAutoRefresh() {
-    if (autoRefresh) {
-        clearInterval(autoRefresh);
-        autoRefresh = null;
-    }
-}
-
-// --- Services ---
-
-async function loadServices() {
-    const services = await fetchAPI('/services');
-    const grid = document.getElementById('services-grid');
-    if (!services || !grid) return;
-
-    grid.innerHTML = services.map(svc => `
-        <div class="service-card">
-            <div class="service-card-header">
-                <span class="service-card-name">${svc.display_name}</span>
-                <span class="badge badge-${svc.status}">${svc.status}</span>
-            </div>
-            <div class="service-card-meta">
-                Type: ${svc.service_type} | Unit: ${svc.systemd_unit || 'N/A'} | Port: ${svc.port || 'N/A'}
-            </div>
-            <div class="service-card-actions">
-                <button class="btn btn-sm btn-success" onclick="serviceAction('${svc.name}', 'restart')">Restart</button>
-                <button class="btn btn-sm" onclick="serviceDiagnose('${svc.name}')">Diagnose</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-async function serviceAction(name, action) {
-    if (!confirm(`${action} service "${name}"?`)) return;
-    const result = await fetchAPI(`/services/${name}/${action}`, { method: 'POST' });
-    if (result) {
-        showNotification(`${action} queued for ${name}`, 'success');
-        setTimeout(loadServices, 2000);
-    }
-}
-
-async function serviceDiagnose(name) {
-    showNotification(`Running diagnostics for ${name}...`, 'info');
-}
-
-// --- Events ---
-
-async function loadEvents(severity = 'all', service = 'all') {
-    const params = new URLSearchParams();
-    if (severity !== 'all') params.set('severity', severity);
-    if (service !== 'all') params.set('service', service);
-
-    const events = await fetchAPI(`/events?${params}`);
-    const container = document.getElementById('events-list');
-    if (!events || !container) return;
-
-    if (events.length === 0) {
-        container.innerHTML = '<p class="loading">No events to display. Events appear when the daemon is running.</p>';
-        return;
+      ws = new WebSocket(proto + '//' + location.host + '/ws/events');
+    } catch (e) {
+      scheduleReconnect();
+      return;
     }
 
-    container.innerHTML = events.map(evt => `
-        <div class="event-card severity-${evt.severity}">
-            <div style="display: flex; justify-content: space-between;">
-                <span class="badge badge-${evt.severity}">${evt.severity}</span>
-                <span class="event-time">${new Date(evt.timestamp).toLocaleString()}</span>
-            </div>
-            <div class="event-message">${evt.message}</div>
-            ${evt.service_name ? `<div class="event-time">Service: ${evt.service_name}</div>` : ''}
-        </div>
-    `).join('');
-}
-
-function filterEvents() {
-    const severity = document.getElementById('severity-filter')?.value || 'all';
-    const service = document.getElementById('service-filter')?.value || 'all';
-    loadEvents(severity, service);
-}
-
-// --- Actions ---
-
-async function loadActions() {
-    const actions = await fetchAPI('/actions');
-    const container = document.getElementById('actions-list');
-    if (!actions || !container) return;
-
-    if (actions.length === 0) {
-        container.innerHTML = '<p class="loading">No pending actions.</p>';
-        return;
-    }
-
-    container.innerHTML = actions.map(action => `
-        <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <strong>${action.action_type}</strong>
-                    <span class="badge badge-${action.status}">${action.status}</span>
-                </div>
-                <div class="btn-group">
-                    ${action.status === 'pending' ? `
-                        <button class="btn btn-sm btn-success" onclick="approveAction('${action.id}')">Approve</button>
-                        <button class="btn btn-sm btn-danger" onclick="denyAction('${action.id}')">Deny</button>
-                    ` : ''}
-                </div>
-            </div>
-            <div class="event-time">${new Date(action.created_at).toLocaleString()}</div>
-        </div>
-    `).join('');
-}
-
-async function approveAction(id) {
-    if (!confirm('Approve this action?')) return;
-    const result = await fetchAPI(`/actions/${id}/approve`, { method: 'POST' });
-    if (result) {
-        showNotification('Action approved', 'success');
-        loadActions();
-    }
-}
-
-async function denyAction(id) {
-    const reason = prompt('Reason for denial:');
-    if (reason === null) return;
-    const result = await fetchAPI(`/actions/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason }) });
-    if (result) {
-        showNotification('Action denied', 'info');
-        loadActions();
-    }
-}
-
-// --- Chat (Ask) ---
-
-async function sendQuestion() {
-    const input = document.getElementById('chat-input');
-    const messages = document.getElementById('chat-messages');
-    if (!input || !messages) return;
-
-    const question = input.value.trim();
-    if (!question) return;
-
-    // Add user message
-    messages.innerHTML += `<div class="chat-message user">${escapeHtml(question)}</div>`;
-    input.value = '';
-    messages.scrollTop = messages.scrollHeight;
-
-    // Show loading
-    messages.innerHTML += `<div class="chat-message assistant loading" id="loading-msg">Thinking...</div>`;
-    messages.scrollTop = messages.scrollHeight;
-
-    const result = await fetchAPI('/ask', {
-        method: 'POST',
-        body: JSON.stringify({ question }),
+    ws.addEventListener('open', () => {
+      console.debug('[OptAware] WebSocket connected');
+      reconnectDelay = 3000;
+      // Update agent status dot to indicate live connection
+      const dot = document.getElementById('agent-status-dot');
+      if (dot) dot.className = 'status-dot running';
     });
 
-    // Remove loading
-    document.getElementById('loading-msg')?.remove();
+    ws.addEventListener('close', () => {
+      console.debug('[OptAware] WebSocket closed, reconnecting…');
+      scheduleReconnect();
+    });
 
-    if (result) {
-        messages.innerHTML += `<div class="chat-message assistant">${escapeHtml(result.answer)}</div>`;
-    } else {
-        messages.innerHTML += `<div class="chat-message assistant">Error: Could not get a response.</div>`;
-    }
-    messages.scrollTop = messages.scrollHeight;
-}
+    ws.addEventListener('error', () => {
+      ws.close();
+    });
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+    ws.addEventListener('message', (evt) => {
+      let data;
+      try { data = JSON.parse(evt.data); } catch { return; }
+      _handleWsMessage(data);
+    });
+  }
 
-// --- WebSocket ---
+  function scheduleReconnect() {
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+  }
 
-function connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${location.host}/ws/events`);
+  function _handleWsMessage(data) {
+    if (!data) return;
 
-    ws.onopen = () => console.log('WebSocket connected');
-    ws.onclose = () => {
-        console.log('WebSocket disconnected, reconnecting in 5s...');
-        setTimeout(connectWebSocket, 5000);
-    };
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            handleRealtimeEvent(data);
-        } catch (e) {
-            console.error('WebSocket parse error:', e);
-        }
-    };
-}
+    // New event broadcast
+    if (data.type === 'event' || data.severity) {
+      const sev = data.severity || 'info';
+      const toastType = (sev === 'critical' || sev === 'error') ? 'error' : 'info';
+      _showToast('[' + sev.toUpperCase() + '] ' + (data.message || ''), toastType);
 
-function handleRealtimeEvent(data) {
-    if (data.type === 'event') {
-        showNotification(`[${data.severity}] ${data.message}`, data.severity === 'error' ? 'error' : 'info');
-    }
-}
-
-// --- Settings ---
-
-function saveApiKey() {
-    const key = document.getElementById('api-key-input')?.value;
-    if (key) {
-        localStorage.setItem('optaware_api_key', key);
-        showNotification('API key saved', 'success');
-    }
-}
-
-// --- Init ---
-
-document.addEventListener('DOMContentLoaded', () => {
-    // Handle chat enter key
-    const chatInput = document.getElementById('chat-input');
-    if (chatInput) {
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') sendQuestion();
-        });
+      // If the events page timeline is present, prepend the new event
+      const timeline = document.getElementById('events-timeline');
+      if (timeline && !timeline.querySelector('.loading-state')) {
+        const div = document.createElement('div');
+        div.className = 'event-card sev-' + sev;
+        div.innerHTML = `
+          <div class="event-card-left">
+            <span class="sev-badge sev-${escHtml(sev)}">${escHtml(sev)}</span>
+          </div>
+          <div class="event-card-body">
+            <div class="event-card-msg">${escHtml(data.message || '')}</div>
+            <div class="event-card-meta">
+              ${data.service_name ? '<span class="meta-chip">' + escHtml(data.service_name) + '</span>' : ''}
+              <span class="meta-time">just now (live)</span>
+            </div>
+          </div>
+        `;
+        timeline.insertBefore(div, timeline.firstChild);
+      }
     }
 
-    // Connect WebSocket if available
-    try { connectWebSocket(); } catch (e) { console.log('WebSocket not available'); }
+    // Metric push
+    if (data.type === 'metrics') {
+      _applyMetricPush(data);
+    }
+  }
+
+  function _applyMetricPush(m) {
+    function setTxt(id, val) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    }
+    function setBar(id, pct) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const c = Math.min(100, Math.max(0, pct || 0));
+      el.style.width = c + '%';
+      el.classList.remove('bar-low', 'bar-mid', 'bar-high');
+      el.classList.add(c > 85 ? 'bar-high' : c > 60 ? 'bar-mid' : 'bar-low');
+    }
+    if (m.cpu_percent != null) {
+      setTxt('cpu-value', m.cpu_percent.toFixed(1) + '%');
+      setBar('cpu-bar', m.cpu_percent);
+    }
+    if (m.memory_percent != null) {
+      setTxt('mem-value', m.memory_percent.toFixed(1) + '%');
+      setBar('mem-bar', m.memory_percent);
+    }
+  }
+
+  // Delay initial connect slightly to let page finish loading
+  setTimeout(connect, 1200);
+})();
+
+/* ============================================================
+   STUBS for pages that override these (prevents ReferenceError
+   when the base template's inline scripts call them before a
+   page's own script block has run)
+   ============================================================ */
+
+if (typeof window.showActionDetail === 'undefined') {
+  window.showActionDetail = function() {};
+}
+if (typeof window.showServiceDetail === 'undefined') {
+  window.showServiceDetail = function() {};
+}
+
+/* ============================================================
+   GLOBAL ERROR BOUNDARY — prevents uncaught rejections from
+   breaking the entire page
+   ============================================================ */
+
+window.addEventListener('unhandledrejection', function(evt) {
+  console.warn('[OptAware] Unhandled promise rejection:', evt.reason);
+  evt.preventDefault();
 });
