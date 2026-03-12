@@ -9,8 +9,9 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
-# Module-level correlation ID context variable
+# Module-level context variables
 _correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+_agent_role_var: ContextVar[str] = ContextVar("agent_role", default="")
 
 logger = logging.getLogger("optaware")
 
@@ -32,11 +33,22 @@ def new_correlation_id() -> str:
     return cid
 
 
+def get_agent_role() -> str:
+    """Return the current agent role from context, or empty string if none set."""
+    return _agent_role_var.get()
+
+
+def set_agent_role(role: str) -> None:
+    """Set the agent role in the current context."""
+    _agent_role_var.set(role)
+
+
 class CorrelationIdFilter(logging.Filter):
-    """Logging filter that injects the current correlation_id into every log record."""
+    """Logging filter that injects correlation_id and agent_role into every log record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = get_correlation_id()  # type: ignore[attr-defined]
+        record.agent_role = get_agent_role()  # type: ignore[attr-defined]
         return True
 
 

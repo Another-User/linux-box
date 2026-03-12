@@ -1,0 +1,31 @@
+[Unit]
+Description=OptAware Auditor Agent (append-only audit trail)
+Documentation=https://github.com/optaware/optaware-agent
+After=optaware-coordinator.service
+Requires=optaware-coordinator.service
+
+[Service]
+Type=simple
+User=optaware-auditor
+Group=optaware
+ExecStart=/usr/bin/python3 -m agents.runner --role auditor --config /etc/optaware/optaware.yaml
+WorkingDirectory=/opt/optaware
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=optaware-auditor
+
+# Security hardening — auditor only appends to audit log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/optaware /var/log/optaware
+PrivateTmp=true
+
+# Minimal capabilities
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=optaware-coordinator.service

@@ -1,0 +1,33 @@
+[Unit]
+Description=OptAware Observer Agent (read-only metrics and log collection)
+Documentation=https://github.com/optaware/optaware-agent
+After=optaware-coordinator.service
+Requires=optaware-coordinator.service
+
+[Service]
+Type=simple
+User=optaware-observer
+Group=optaware
+ExecStart=/usr/bin/python3 -m agents.runner --role observer --config /etc/optaware/optaware.yaml
+WorkingDirectory=/opt/optaware
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=optaware-observer
+
+# Security hardening — observer is read-only
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/proc /sys /var/log
+ReadWritePaths=/run/optaware /data/optaware/logs
+PrivateTmp=true
+
+# Capability restrictions — only what's needed for reading metrics
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=optaware-coordinator.service

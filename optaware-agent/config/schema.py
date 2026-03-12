@@ -72,6 +72,38 @@ class PortalConfig(BaseModel):
     secret_key: str = ""
 
 
+class AgentRoleConfig(BaseModel):
+    """Per-agent-role configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    socket_path: str = ""
+    user: str = ""
+    group: str = "optaware"
+    allowed_commands: list[str] = Field(default_factory=list)
+
+
+class AgentsConfig(BaseModel):
+    """Multi-agent service account configuration.
+
+    When ``enabled`` is ``False`` (default), OptAware runs in monolithic
+    single-process mode.  Set to ``True`` to run each role as a separate
+    process under a dedicated Linux service account.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    socket_dir: str = "/run/optaware"
+    signing_secret: str = ""
+    coordinator: AgentRoleConfig = Field(default_factory=AgentRoleConfig)
+    observer: AgentRoleConfig = Field(default_factory=AgentRoleConfig)
+    planner: AgentRoleConfig = Field(default_factory=AgentRoleConfig)
+    executor: AgentRoleConfig = Field(default_factory=AgentRoleConfig)
+    auditor: AgentRoleConfig = Field(default_factory=AgentRoleConfig)
+
+
 class OptAwareConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -83,3 +115,4 @@ class OptAwareConfig(BaseModel):
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     portal: PortalConfig = Field(default_factory=PortalConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)

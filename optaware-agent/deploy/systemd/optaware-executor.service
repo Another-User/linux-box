@@ -1,0 +1,31 @@
+[Unit]
+Description=OptAware Executor Agent (scoped command execution via sudoers)
+Documentation=https://github.com/optaware/optaware-agent
+After=optaware-coordinator.service
+Requires=optaware-coordinator.service
+
+[Service]
+Type=simple
+User=optaware-executor
+Group=optaware
+ExecStart=/usr/bin/python3 -m agents.runner --role executor --config /etc/optaware/optaware.yaml
+WorkingDirectory=/opt/optaware
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=optaware-executor
+
+# Security hardening — executor needs some elevated access via sudo
+NoNewPrivileges=false
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/optaware /data/optaware/logs /data/optaware/rollback
+PrivateTmp=true
+
+# Allow the executor to use sudo for scoped commands
+# Actual command allowlist is in /etc/sudoers.d/optaware-executor
+
+[Install]
+WantedBy=optaware-coordinator.service

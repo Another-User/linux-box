@@ -1,0 +1,33 @@
+[Unit]
+Description=OptAware Coordinator Agent
+Documentation=https://github.com/optaware/optaware-agent
+After=network.target
+Wants=optaware-observer.service optaware-planner.service optaware-executor.service optaware-auditor.service
+
+[Service]
+Type=simple
+User=optaware
+Group=optaware
+ExecStart=/usr/bin/python3 -m agents.runner --role coordinator --config /etc/optaware/optaware.yaml
+WorkingDirectory=/opt/optaware
+Restart=on-failure
+RestartSec=5
+
+# Runtime directory for IPC sockets
+RuntimeDirectory=optaware
+RuntimeDirectoryMode=0770
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=optaware-coordinator
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/optaware /var/log/optaware /data/optaware
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

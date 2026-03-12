@@ -1,0 +1,37 @@
+# OptAware Executor — scoped sudo rules
+#
+# Install: cp deploy/sudoers.d/optaware-executor /etc/sudoers.d/optaware-executor
+#          chmod 0440 /etc/sudoers.d/optaware-executor
+#          visudo -c  # validate syntax
+#
+# The executor agent may only run these specific commands as root.
+# All other commands are denied.  This is the OS-enforced guardrail
+# that prevents the AI from running arbitrary privileged commands.
+
+# Service lifecycle management (systemctl)
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl start *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl stop *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl restart *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl reload *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl status *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl is-active *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl is-enabled *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+
+# Docker container management
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/docker start *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/docker stop *
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/docker restart *
+
+# Read-only diagnostics
+optaware-executor ALL=(root) NOPASSWD: /usr/bin/journalctl *
+optaware-executor ALL=(root) NOPASSWD: /usr/sbin/nft list ruleset
+optaware-executor ALL=(root) NOPASSWD: /usr/sbin/ss -tlnp
+
+# EXPLICITLY DENIED — never allow these even with sudo
+# (Defence in depth — the action_planner.py regex also blocks these)
+optaware-executor ALL=(root) NOEXEC: /usr/bin/rm
+optaware-executor ALL=(root) NOEXEC: /usr/bin/dd
+optaware-executor ALL=(root) NOEXEC: /usr/bin/mkfs*
+optaware-executor ALL=(root) NOEXEC: /usr/bin/chmod 777 *
+optaware-executor ALL=(root) NOEXEC: /usr/sbin/iptables -F

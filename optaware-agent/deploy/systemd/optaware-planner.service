@@ -1,0 +1,32 @@
+[Unit]
+Description=OptAware Planner Agent (LLM cognition, no shell access)
+Documentation=https://github.com/optaware/optaware-agent
+After=optaware-coordinator.service
+Requires=optaware-coordinator.service
+
+[Service]
+Type=simple
+User=optaware-planner
+Group=optaware
+ExecStart=/usr/bin/python3 -m agents.runner --role planner --config /etc/optaware/optaware.yaml
+WorkingDirectory=/opt/optaware
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=optaware-planner
+
+# Security hardening — planner cannot execute system commands
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/optaware /data/optaware/logs /data/optaware/cost_tracker.json
+PrivateTmp=true
+
+# No capabilities — planner only talks to the LLM API over HTTPS
+CapabilityBoundingSet=
+SystemCallFilter=@system-service @network-io
+
+[Install]
+WantedBy=optaware-coordinator.service
