@@ -1,0 +1,178 @@
+# OptAware Data Map — LLM-readable index of all data locations
+# This file helps the LLM understand where data lives on the system.
+
+system:
+  hostname_file: /etc/hostname
+  hosts_file: /etc/hosts
+  resolv_conf: /etc/resolv.conf
+  fstab: /etc/fstab
+  os_release: /etc/os-release
+  sysctl: /etc/sysctl.conf
+  timezone: /etc/timezone
+
+optaware:
+  config: /etc/optaware/optaware.yaml
+  service_manifest: /etc/optaware/service_manifest.yaml
+  data_dir: /data
+  logs: /data/logs
+  knowledge_store: /data/knowledge
+  backups: /data/backups
+
+services:
+  dns:
+    config:
+      - /etc/bind/named.conf
+      - /etc/bind/named.conf.local
+      - /etc/bind/named.conf.options
+    zones: /etc/bind/zones/
+    logs:
+      - /var/log/named/
+    data: /var/cache/bind/
+
+  dhcp:
+    config:
+      - /etc/kea/kea-dhcp4.conf
+    leases: /var/lib/kea/
+    logs:
+      - /var/log/kea/
+
+  firewall:
+    config:
+      - /etc/nftables.conf
+      - /etc/nftables.d/
+    iptables_legacy: /etc/iptables/rules.v4
+    logs:
+      - /var/log/nftables.log
+
+  vpn:
+    wireguard:
+      config: /etc/wireguard/
+      keys: /etc/wireguard/keys/
+    openvpn:
+      config: /etc/openvpn/
+      keys: /etc/openvpn/keys/
+    logs:
+      - /var/log/wireguard.log
+
+  web:
+    nginx:
+      config: /etc/nginx/nginx.conf
+      sites_available: /etc/nginx/sites-available/
+      sites_enabled: /etc/nginx/sites-enabled/
+      snippets: /etc/nginx/snippets/
+    document_root: /var/www/
+    logs:
+      - /var/log/nginx/access.log
+      - /var/log/nginx/error.log
+    ssl: /etc/ssl/
+
+  mail:
+    postfix:
+      config: /etc/postfix/main.cf
+      master: /etc/postfix/master.cf
+      maps: /etc/postfix/
+    dovecot:
+      config: /etc/dovecot/dovecot.conf
+      conf_d: /etc/dovecot/conf.d/
+    mailboxes: /var/mail/
+    logs:
+      - /var/log/mail.log
+      - /var/log/mail.err
+
+  database:
+    postgresql:
+      config: /etc/postgresql/
+      data: /var/lib/postgresql/
+      logs: /var/log/postgresql/
+    mysql:
+      config: /etc/mysql/
+      data: /var/lib/mysql/
+      logs: /var/log/mysql/
+
+  monitoring:
+    prometheus:
+      config: /etc/prometheus/prometheus.yml
+      rules: /etc/prometheus/rules/
+      data: /var/lib/prometheus/
+    grafana:
+      config: /etc/grafana/grafana.ini
+      dashboards: /var/lib/grafana/dashboards/
+      data: /var/lib/grafana/
+
+  backup:
+    restic:
+      config: /etc/restic/
+      repository: /data/backups/restic/
+      cache: /var/cache/restic/
+    borgmatic:
+      config: /etc/borgmatic/
+
+  ntp:
+    config: /etc/chrony/chrony.conf
+    drift: /var/lib/chrony/drift
+    logs:
+      - /var/log/chrony/
+
+  ssh:
+    config: /etc/ssh/sshd_config
+    config_d: /etc/ssh/sshd_config.d/
+    host_keys: /etc/ssh/ssh_host_*
+    authorized_keys: /root/.ssh/authorized_keys
+    logs:
+      - /var/log/auth.log
+
+  certificates:
+    letsencrypt:
+      live: /etc/letsencrypt/live/
+      archive: /etc/letsencrypt/archive/
+      renewal: /etc/letsencrypt/renewal/
+    custom: /etc/ssl/private/
+
+  samba:
+    config: /etc/samba/smb.conf
+    shares: /srv/samba/
+    logs: /var/log/samba/
+
+  nfs:
+    exports: /etc/exports
+    data: /srv/nfs/
+
+  ldap:
+    config: /etc/ldap/slapd.d/
+    data: /var/lib/ldap/
+    logs: /var/log/slapd.log
+
+  redis:
+    config: /etc/redis/redis.conf
+    data: /var/lib/redis/
+    logs: /var/log/redis/
+
+  haproxy:
+    config: /etc/haproxy/haproxy.cfg
+    logs: /var/log/haproxy.log
+
+  fail2ban:
+    config: /etc/fail2ban/jail.local
+    jail_d: /etc/fail2ban/jail.d/
+    filter_d: /etc/fail2ban/filter.d/
+    data: /var/lib/fail2ban/
+    logs: /var/log/fail2ban.log
+
+logs:
+  system:
+    syslog: /var/log/syslog
+    auth: /var/log/auth.log
+    kern: /var/log/kern.log
+    dmesg: /var/log/dmesg
+    journal: /run/log/journal/
+  application:
+    optaware: /data/logs/optaware.log
+    daemon: /data/logs/daemon.log
+
+runtime:
+  pid_files: /run/
+  sockets:
+    docker: /var/run/docker.sock
+    mysql: /var/run/mysqld/mysqld.sock
+    postgresql: /var/run/postgresql/.s.PGSQL.5432
+  tmp: /tmp/optaware/

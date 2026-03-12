@@ -1,0 +1,931 @@
+# OptAware Service Manifest
+# Registry of all managed Linux services.
+# Each entry fully describes a service so that the LLM agent can understand,
+# manage, and reason about it without additional context.
+
+version: "1.0"
+schema: "optaware-service-manifest"
+
+# ---------------------------------------------------------------------------
+# CORE SERVICES  (always available; subset enabled at setup time)
+# ---------------------------------------------------------------------------
+core_services:
+
+  - name: dns
+    display_name: "DNS Server (BIND9)"
+    type: core
+    systemd_unit: named.service
+    package: bind9
+    default_port: 53
+    protocols: [tcp, udp]
+    config_paths:
+      main: /etc/bind/named.conf
+      options: /etc/bind/named.conf.options
+      local: /etc/bind/named.conf.local
+      zones_dir: /etc/bind/zones
+    log_paths:
+      default: /var/log/named/default.log
+      query: /var/log/named/query.log
+      security: /var/log/named/security.log
+      syslog: /var/log/syslog
+    data_dirs:
+      cache: /var/cache/bind
+      run: /var/run/named
+    pid_file: /var/run/named/named.pid
+    socket_paths: []
+    dependencies: []
+    health_check_cmd: "dig @127.0.0.1 localhost +short +time=2"
+    reload_cmd: "rndc reload"
+    description: >
+      Authoritative and recursive DNS resolver using ISC BIND9.
+      Resolves hostnames for the local network and can serve as
+      an authoritative nameserver for internal zones.
+    risk_level: high
+    tags: [networking, dns, resolution]
+
+  - name: dhcp
+    display_name: "DHCP Server (Kea)"
+    type: core
+    systemd_unit: kea-dhcp4.service
+    package: kea
+    default_port: 67
+    protocols: [udp]
+    config_paths:
+      main: /etc/kea/kea-dhcp4.conf
+      leases: /var/lib/kea/dhcp4.leases
+    log_paths:
+      default: /var/log/kea/kea-dhcp4.log
+      syslog: /var/log/syslog
+    data_dirs:
+      leases: /var/lib/kea
+      run: /var/run/kea
+    pid_file: /var/run/kea/kea-dhcp4.kea-dhcp4.pid
+    socket_paths:
+      control: /var/run/kea/kea4-ctrl-socket
+    dependencies: []
+    health_check_cmd: "systemctl is-active kea-dhcp4.service"
+    reload_cmd: "systemctl reload kea-dhcp4"
+    description: >
+      DHCP server using ISC Kea. Assigns IPv4 addresses, default gateways,
+      DNS server addresses, and NTP servers to network clients.
+    risk_level: high
+    tags: [networking, dhcp, ip-assignment]
+
+  - name: firewall
+    display_name: "Firewall (nftables)"
+    type: core
+    systemd_unit: nftables.service
+    package: nftables
+    default_port: null
+    protocols: []
+    config_paths:
+      main: /etc/nftables.conf
+      rules_dir: /etc/nftables.d
+    log_paths:
+      kernel: /var/log/kern.log
+      syslog: /var/log/syslog
+    data_dirs:
+      run: /var/run/nftables
+    pid_file: null
+    socket_paths: []
+    dependencies: []
+    health_check_cmd: "nft list ruleset | head -5"
+    reload_cmd: "systemctl reload nftables"
+    description: >
+      Stateful packet filtering firewall using the Linux nftables framework.
+      Replaces iptables/ip6tables with a unified ruleset for IPv4 and IPv6.
+    risk_level: critical
+    tags: [security, networking, firewall]
+
+  - name: vpn
+    display_name: "VPN (WireGuard)"
+    type: core
+    systemd_unit: "wg-quick@wg0.service"
+    package: wireguard-tools
+    default_port: 51820
+    protocols: [udp]
+    config_paths:
+      interface: /etc/wireguard/wg0.conf
+      keys_dir: /etc/wireguard
+    log_paths:
+      syslog: /var/log/syslog
+      journal: "journalctl -u wg-quick@wg0"
+    data_dirs:
+      run: /var/run/wireguard
+    pid_file: null
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "wg show wg0 2>/dev/null | grep -c 'peer'"
+    reload_cmd: "wg syncconf wg0 <(wg-quick strip wg0)"
+    description: >
+      Modern VPN tunnel using WireGuard. Provides encrypted site-to-site
+      or client-to-site connectivity. Uses public-key cryptography with
+      minimal attack surface.
+    risk_level: high
+    tags: [networking, vpn, security]
+
+  - name: web
+    display_name: "Web Server (Nginx)"
+    type: core
+    systemd_unit: nginx.service
+    package: nginx
+    default_port: 80
+    protocols: [tcp]
+    config_paths:
+      main: /etc/nginx/nginx.conf
+      sites_available: /etc/nginx/sites-available
+      sites_enabled: /etc/nginx/sites-enabled
+      conf_d: /etc/nginx/conf.d
+      mime_types: /etc/nginx/mime.types
+    log_paths:
+      access: /var/log/nginx/access.log
+      error: /var/log/nginx/error.log
+    data_dirs:
+      html: /var/www/html
+      cache: /var/cache/nginx
+      run: /var/run
+    pid_file: /var/run/nginx.pid
+    socket_paths: []
+    dependencies: [firewall, certificates]
+    health_check_cmd: "nginx -t && curl -sf http://localhost/ -o /dev/null"
+    reload_cmd: "nginx -s reload"
+    description: >
+      High-performance HTTP/HTTPS web server and reverse proxy.
+      Serves static files, proxies requests to application backends,
+      and handles TLS termination.
+    risk_level: medium
+    tags: [web, http, reverse-proxy]
+
+  - name: mail_smtp
+    display_name: "SMTP Mail Server (Postfix)"
+    type: core
+    systemd_unit: postfix.service
+    package: postfix
+    default_port: 25
+    protocols: [tcp]
+    config_paths:
+      main: /etc/postfix/main.cf
+      master: /etc/postfix/master.cf
+      virtual: /etc/postfix/virtual
+      aliases: /etc/aliases
+      tls_dir: /etc/postfix/tls
+    log_paths:
+      mail: /var/log/mail.log
+      error: /var/log/mail.err
+      syslog: /var/log/syslog
+    data_dirs:
+      queue: /var/spool/postfix
+      data: /var/lib/postfix
+    pid_file: /var/spool/postfix/pid/master.pid
+    socket_paths:
+      smtp: /var/spool/postfix/private/smtp
+      lmtp: /var/spool/postfix/private/lmtp
+    dependencies: [firewall, certificates, dns]
+    health_check_cmd: "postfix status"
+    reload_cmd: "postfix reload"
+    description: >
+      MTA (Mail Transfer Agent) using Postfix. Sends and receives SMTP
+      email, enforces SPF/DKIM checks, handles local delivery and
+      relay configuration.
+    risk_level: high
+    tags: [email, smtp, mta]
+
+  - name: mail_imap
+    display_name: "IMAP Mail Server (Dovecot)"
+    type: core
+    systemd_unit: dovecot.service
+    package: dovecot-core
+    default_port: 143
+    protocols: [tcp]
+    config_paths:
+      main: /etc/dovecot/dovecot.conf
+      conf_d: /etc/dovecot/conf.d
+      users: /etc/dovecot/users
+      passwd: /etc/dovecot/passwd
+    log_paths:
+      info: /var/log/dovecot/info.log
+      error: /var/log/dovecot/error.log
+      debug: /var/log/dovecot/debug.log
+      syslog: /var/log/syslog
+    data_dirs:
+      mail: /var/mail
+      lib: /var/lib/dovecot
+      run: /var/run/dovecot
+    pid_file: /var/run/dovecot/master.pid
+    socket_paths:
+      lmtp: /var/run/dovecot/lmtp
+      auth: /var/run/dovecot/auth-userdb
+    dependencies: [firewall, certificates, mail_smtp]
+    health_check_cmd: "doveadm who 2>/dev/null; doveadm stats dump 2>/dev/null | head -3"
+    reload_cmd: "doveadm reload"
+    description: >
+      IMAP/POP3 server using Dovecot. Delivers mail to user mailboxes,
+      provides IMAP4 and POP3 access, and integrates with Postfix via
+      LMTP for local delivery.
+    risk_level: high
+    tags: [email, imap, pop3]
+
+  - name: database_pg
+    display_name: "PostgreSQL Database"
+    type: core
+    systemd_unit: postgresql.service
+    package: postgresql
+    default_port: 5432
+    protocols: [tcp]
+    config_paths:
+      main: /etc/postgresql/15/main/postgresql.conf
+      hba: /etc/postgresql/15/main/pg_hba.conf
+      ident: /etc/postgresql/15/main/pg_ident.conf
+    log_paths:
+      default: /var/log/postgresql/postgresql-15-main.log
+    data_dirs:
+      data: /var/lib/postgresql/15/main
+      run: /var/run/postgresql
+    pid_file: /var/run/postgresql/15-main.pid
+    socket_paths:
+      unix: /var/run/postgresql/.s.PGSQL.5432
+    dependencies: [firewall]
+    health_check_cmd: "pg_isready -U postgres"
+    reload_cmd: "pg_ctlcluster 15 main reload"
+    description: >
+      Relational database management system using PostgreSQL.
+      Stores structured application data, configuration history,
+      audit logs, and agent state for OptAware.
+    risk_level: high
+    tags: [database, sql, storage]
+
+  - name: monitoring
+    display_name: "Monitoring (Prometheus)"
+    type: core
+    systemd_unit: prometheus.service
+    package: prometheus
+    default_port: 9090
+    protocols: [tcp]
+    config_paths:
+      main: /etc/prometheus/prometheus.yml
+      rules_dir: /etc/prometheus/rules
+      web_config: /etc/prometheus/web.yml
+    log_paths:
+      syslog: /var/log/syslog
+      journal: "journalctl -u prometheus"
+    data_dirs:
+      data: /var/lib/prometheus
+      run: /var/run/prometheus
+    pid_file: /var/run/prometheus/prometheus.pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "curl -sf http://localhost:9090/-/healthy"
+    reload_cmd: "curl -sf -X POST http://localhost:9090/-/reload"
+    description: >
+      Time-series metrics collection and alerting using Prometheus.
+      Scrapes metrics from node_exporter, application endpoints, and
+      service exporters. Evaluates alerting rules and fires alerts.
+    risk_level: low
+    tags: [monitoring, metrics, alerting]
+
+  - name: backup
+    display_name: "Backup (Restic)"
+    type: core
+    systemd_unit: restic-backup.timer
+    package: restic
+    default_port: null
+    protocols: []
+    config_paths:
+      env: /etc/restic/backup.env
+      excludes: /etc/restic/excludes.txt
+      service: /etc/systemd/system/restic-backup.service
+      timer: /etc/systemd/system/restic-backup.timer
+    log_paths:
+      journal: "journalctl -u restic-backup"
+      status: /var/log/restic/backup.log
+    data_dirs:
+      repository: /data/backups/restic
+      cache: /root/.cache/restic
+    pid_file: null
+    socket_paths: []
+    dependencies: []
+    health_check_cmd: "restic snapshots --no-lock 2>/dev/null | tail -3"
+    reload_cmd: "systemctl start restic-backup.service"
+    description: >
+      Encrypted, deduplicated backup system using Restic.
+      Runs as a systemd timer to back up critical directories to a
+      local or remote repository. Supports pruning old snapshots.
+    risk_level: low
+    tags: [backup, disaster-recovery, storage]
+
+  - name: ntp
+    display_name: "NTP Server (Chrony)"
+    type: core
+    systemd_unit: chronyd.service
+    package: chrony
+    default_port: 123
+    protocols: [udp]
+    config_paths:
+      main: /etc/chrony/chrony.conf
+      keys: /etc/chrony/chrony.keys
+    log_paths:
+      measurements: /var/log/chrony/measurements.log
+      statistics: /var/log/chrony/statistics.log
+      tracking: /var/log/chrony/tracking.log
+    data_dirs:
+      drift: /var/lib/chrony
+      run: /var/run/chrony
+    pid_file: /var/run/chrony/chronyd.pid
+    socket_paths:
+      cmdmon: /var/run/chrony/chronyd.sock
+    dependencies: []
+    health_check_cmd: "chronyc tracking | grep -E 'Reference|Stratum'"
+    reload_cmd: "chronyc reload sources"
+    description: >
+      NTP (Network Time Protocol) daemon using Chrony. Synchronizes the
+      system clock against upstream NTP servers and optionally serves
+      time to local network clients.
+    risk_level: medium
+    tags: [time, ntp, synchronization]
+
+  - name: ssh
+    display_name: "SSH Server (OpenSSH)"
+    type: core
+    systemd_unit: sshd.service
+    package: openssh-server
+    default_port: 22
+    protocols: [tcp]
+    config_paths:
+      main: /etc/ssh/sshd_config
+      conf_d: /etc/ssh/sshd_config.d
+      host_keys: /etc/ssh
+      authorized_keys_root: /root/.ssh/authorized_keys
+    log_paths:
+      auth: /var/log/auth.log
+      syslog: /var/log/syslog
+    data_dirs:
+      run: /var/run/sshd
+    pid_file: /var/run/sshd.pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "sshd -t && ss -tlnp | grep ':22 '"
+    reload_cmd: "systemctl reload sshd"
+    description: >
+      Secure Shell daemon using OpenSSH. Provides encrypted remote
+      terminal access, secure file transfer (SFTP/SCP), and tunnel
+      forwarding. Critical for remote server management.
+    risk_level: critical
+    tags: [security, remote-access, ssh]
+
+  - name: certificates
+    display_name: "TLS Certificates (Certbot)"
+    type: core
+    systemd_unit: certbot.timer
+    package: certbot
+    default_port: null
+    protocols: []
+    config_paths:
+      main: /etc/letsencrypt/cli.ini
+      renewal_dir: /etc/letsencrypt/renewal
+      certs_dir: /etc/letsencrypt/live
+      archive_dir: /etc/letsencrypt/archive
+    log_paths:
+      certbot: /var/log/letsencrypt/letsencrypt.log
+    data_dirs:
+      live: /etc/letsencrypt/live
+      archive: /etc/letsencrypt/archive
+      work: /var/lib/letsencrypt
+    pid_file: null
+    socket_paths: []
+    dependencies: [web, dns]
+    health_check_cmd: "certbot certificates 2>/dev/null | grep -E 'Domains|Expiry'"
+    reload_cmd: "systemctl start certbot.service"
+    description: >
+      Automatic TLS certificate management using Certbot/ACME.
+      Obtains and renews Let's Encrypt certificates. Runs as a
+      systemd timer and reloads dependent services after renewal.
+    risk_level: medium
+    tags: [security, tls, certificates, pki]
+
+# ---------------------------------------------------------------------------
+# ELECTIVE SERVICES  (installed and enabled on demand)
+# ---------------------------------------------------------------------------
+elective_services:
+
+  - name: samba
+    display_name: "File Sharing (Samba)"
+    type: elective
+    systemd_unit: smbd.service
+    package: samba
+    default_port: 445
+    protocols: [tcp]
+    config_paths:
+      main: /etc/samba/smb.conf
+      users_db: /var/lib/samba/private/passdb.tdb
+    log_paths:
+      default: /var/log/samba/log.smbd
+      nmbd: /var/log/samba/log.nmbd
+    data_dirs:
+      shares: /srv/samba/shares
+      lib: /var/lib/samba
+      run: /var/run/samba
+    pid_file: /var/run/samba/smbd.pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "smbclient -L localhost -N 2>/dev/null | grep -c Sharename"
+    reload_cmd: "smbcontrol smbd reload-config"
+    description: >
+      Windows-compatible file and print sharing using Samba (SMB/CIFS).
+      Enables Linux servers to serve files to Windows, macOS, and Linux
+      clients on the local network.
+    risk_level: medium
+    tags: [file-sharing, smb, windows-compatibility]
+
+  - name: nfs
+    display_name: "NFS Server"
+    type: elective
+    systemd_unit: nfs-server.service
+    package: nfs-kernel-server
+    default_port: 2049
+    protocols: [tcp, udp]
+    config_paths:
+      exports: /etc/exports
+      exports_d: /etc/exports.d
+      idmapd: /etc/idmapd.conf
+    log_paths:
+      syslog: /var/log/syslog
+      journal: "journalctl -u nfs-server"
+    data_dirs:
+      exports: /srv/nfs
+      run: /var/run/nfsd
+    pid_file: null
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "showmount -e localhost 2>/dev/null"
+    reload_cmd: "exportfs -ra"
+    description: >
+      Network File System server for Unix/Linux clients.
+      Exports directories over NFSv4 for mounting by remote hosts.
+      Ideal for shared storage in Linux-only environments.
+    risk_level: medium
+    tags: [file-sharing, nfs, storage]
+
+  - name: ldap
+    display_name: "LDAP Directory (OpenLDAP)"
+    type: elective
+    systemd_unit: slapd.service
+    package: slapd
+    default_port: 389
+    protocols: [tcp]
+    config_paths:
+      slapd_d: /etc/ldap/slapd.d
+      ldap_conf: /etc/ldap/ldap.conf
+      schema_dir: /etc/ldap/schema
+    log_paths:
+      syslog: /var/log/syslog
+      journal: "journalctl -u slapd"
+    data_dirs:
+      data: /var/lib/ldap
+      run: /var/run/slapd
+    pid_file: /var/run/slapd/slapd.pid
+    socket_paths:
+      ldapi: /var/run/slapd/ldapi
+    dependencies: [firewall, certificates]
+    health_check_cmd: "ldapsearch -x -H ldap://localhost -b '' -s base namingContexts 2>/dev/null"
+    reload_cmd: "systemctl reload slapd"
+    description: >
+      LDAP directory service using OpenLDAP. Centralizes user
+      authentication and authorization for network services.
+      Can serve as a backend for PAM, SSH, Samba, and mail.
+    risk_level: high
+    tags: [directory, ldap, authentication, iam]
+
+  - name: redis
+    display_name: "Redis Cache"
+    type: elective
+    systemd_unit: redis-server.service
+    package: redis-server
+    default_port: 6379
+    protocols: [tcp]
+    config_paths:
+      main: /etc/redis/redis.conf
+    log_paths:
+      default: /var/log/redis/redis-server.log
+    data_dirs:
+      data: /var/lib/redis
+      run: /var/run/redis
+    pid_file: /var/run/redis/redis-server.pid
+    socket_paths:
+      unix: /var/run/redis/redis.sock
+    dependencies: [firewall]
+    health_check_cmd: "redis-cli ping"
+    reload_cmd: "redis-cli config rewrite"
+    description: >
+      In-memory key-value store using Redis.
+      Used for caching, session storage, pub/sub messaging,
+      and rate-limiting in web applications.
+    risk_level: low
+    tags: [cache, database, nosql]
+
+  - name: docker_registry
+    display_name: "Docker Registry"
+    type: elective
+    systemd_unit: registry.service
+    package: docker-registry
+    default_port: 5000
+    protocols: [tcp]
+    config_paths:
+      main: /etc/docker/registry/config.yml
+    log_paths:
+      journal: "journalctl -u registry"
+    data_dirs:
+      images: /var/lib/registry
+    pid_file: null
+    socket_paths: []
+    dependencies: [firewall, certificates]
+    health_check_cmd: "curl -sf http://localhost:5000/v2/ -o /dev/null"
+    reload_cmd: "systemctl restart registry"
+    description: >
+      Private Docker container image registry.
+      Stores and serves OCI-compliant container images for local
+      infrastructure without relying on Docker Hub.
+    risk_level: low
+    tags: [containers, docker, registry]
+
+  - name: load_balancer
+    display_name: "Load Balancer (HAProxy)"
+    type: elective
+    systemd_unit: haproxy.service
+    package: haproxy
+    default_port: 80
+    protocols: [tcp]
+    config_paths:
+      main: /etc/haproxy/haproxy.cfg
+      errors_dir: /etc/haproxy/errors
+    log_paths:
+      default: /var/log/haproxy.log
+      syslog: /var/log/syslog
+    data_dirs:
+      run: /var/run/haproxy
+    pid_file: /var/run/haproxy/haproxy.pid
+    socket_paths:
+      stats: /var/run/haproxy/admin.sock
+    dependencies: [firewall, certificates]
+    health_check_cmd: "haproxy -c -f /etc/haproxy/haproxy.cfg"
+    reload_cmd: "haproxy -f /etc/haproxy/haproxy.cfg -p /var/run/haproxy/haproxy.pid -sf $(cat /var/run/haproxy/haproxy.pid)"
+    description: >
+      TCP/HTTP load balancer and proxy using HAProxy.
+      Distributes traffic across backend servers, provides health
+      checking, SSL termination, and connection rate limiting.
+    risk_level: high
+    tags: [networking, load-balancing, high-availability]
+
+  - name: reverse_proxy
+    display_name: "Reverse Proxy (nginx-proxy)"
+    type: elective
+    systemd_unit: nginx-proxy.service
+    package: nginx
+    default_port: 443
+    protocols: [tcp]
+    config_paths:
+      main: /etc/nginx/nginx.conf
+      proxy_conf: /etc/nginx/proxy.conf
+      vhosts_dir: /etc/nginx/vhost.d
+      certs_dir: /etc/nginx/certs
+    log_paths:
+      access: /var/log/nginx/proxy-access.log
+      error: /var/log/nginx/proxy-error.log
+    data_dirs:
+      html: /usr/share/nginx/html
+      cache: /var/cache/nginx
+    pid_file: /var/run/nginx-proxy.pid
+    socket_paths: []
+    dependencies: [firewall, certificates, web]
+    health_check_cmd: "nginx -t -c /etc/nginx/nginx.conf"
+    reload_cmd: "nginx -s reload"
+    description: >
+      Automated Nginx reverse proxy with Let's Encrypt TLS support.
+      Routes incoming HTTPS requests to backend services based on
+      virtual host headers. Auto-discovers Docker containers.
+    risk_level: medium
+    tags: [networking, proxy, tls, containers]
+
+  - name: ftp
+    display_name: "FTP Server (vsftpd)"
+    type: elective
+    systemd_unit: vsftpd.service
+    package: vsftpd
+    default_port: 21
+    protocols: [tcp]
+    config_paths:
+      main: /etc/vsftpd.conf
+      user_list: /etc/vsftpd.user_list
+      chroot_list: /etc/vsftpd.chroot_list
+    log_paths:
+      xferlog: /var/log/vsftpd.log
+      syslog: /var/log/syslog
+    data_dirs:
+      ftp_root: /srv/ftp
+      run: /var/run/vsftpd
+    pid_file: /var/run/vsftpd/vsftpd.pid
+    socket_paths: []
+    dependencies: [firewall, certificates]
+    health_check_cmd: "ss -tlnp | grep ':21 '"
+    reload_cmd: "systemctl reload vsftpd"
+    description: >
+      Secure FTP server using vsftpd (Very Secure FTP Daemon).
+      Provides file transfer with chroot jails, virtual users,
+      and optional FTPS (FTP over TLS) support.
+    risk_level: medium
+    tags: [file-transfer, ftp, legacy]
+
+  - name: printing
+    display_name: "Print Server (CUPS)"
+    type: elective
+    systemd_unit: cups.service
+    package: cups
+    default_port: 631
+    protocols: [tcp]
+    config_paths:
+      main: /etc/cups/cupsd.conf
+      printers: /etc/cups/printers.conf
+      ppd_dir: /etc/cups/ppd
+    log_paths:
+      access: /var/log/cups/access_log
+      error: /var/log/cups/error_log
+      page: /var/log/cups/page_log
+    data_dirs:
+      spool: /var/spool/cups
+      lib: /var/lib/cups
+      run: /var/run/cups
+    pid_file: /var/run/cups/cupsd.pid
+    socket_paths:
+      domain: /var/run/cups/cups.sock
+    dependencies: [firewall]
+    health_check_cmd: "lpstat -r 2>/dev/null"
+    reload_cmd: "systemctl reload cups"
+    description: >
+      Network print server using CUPS (Common Unix Printing System).
+      Shares physical and virtual printers across the network,
+      supports IPP, LPD, and SMB print protocols.
+    risk_level: low
+    tags: [printing, cups, network-services]
+
+  - name: cron_manager
+    display_name: "Cron Scheduler"
+    type: elective
+    systemd_unit: cron.service
+    package: cron
+    default_port: null
+    protocols: []
+    config_paths:
+      main: /etc/crontab
+      cron_d: /etc/cron.d
+      cron_daily: /etc/cron.daily
+      cron_weekly: /etc/cron.weekly
+      cron_monthly: /etc/cron.monthly
+      user_crontabs: /var/spool/cron/crontabs
+    log_paths:
+      syslog: /var/log/syslog
+      cron: /var/log/cron.log
+    data_dirs:
+      spool: /var/spool/cron
+    pid_file: /var/run/crond.pid
+    socket_paths: []
+    dependencies: []
+    health_check_cmd: "systemctl is-active cron"
+    reload_cmd: "systemctl reload cron"
+    description: >
+      Traditional cron job scheduler. Executes scheduled commands
+      and scripts at configured times. Manages system maintenance
+      tasks, log rotation triggers, and custom automation scripts.
+    risk_level: low
+    tags: [scheduling, automation, cron]
+
+  - name: grafana
+    display_name: "Grafana Dashboards"
+    type: elective
+    systemd_unit: grafana-server.service
+    package: grafana
+    default_port: 3000
+    protocols: [tcp]
+    config_paths:
+      main: /etc/grafana/grafana.ini
+      provisioning: /etc/grafana/provisioning
+      dashboards: /etc/grafana/provisioning/dashboards
+      datasources: /etc/grafana/provisioning/datasources
+    log_paths:
+      default: /var/log/grafana/grafana.log
+    data_dirs:
+      data: /var/lib/grafana
+      plugins: /var/lib/grafana/plugins
+    pid_file: /var/run/grafana/grafana-server.pid
+    socket_paths: []
+    dependencies: [firewall, monitoring]
+    health_check_cmd: "curl -sf http://localhost:3000/api/health"
+    reload_cmd: "systemctl restart grafana-server"
+    description: >
+      Metrics visualization and dashboarding using Grafana.
+      Connects to Prometheus and other data sources to render
+      real-time graphs, heatmaps, and alert visualizations.
+    risk_level: low
+    tags: [monitoring, visualization, dashboards]
+
+  - name: mysql
+    display_name: "MySQL/MariaDB Database"
+    type: elective
+    systemd_unit: mariadb.service
+    package: mariadb-server
+    default_port: 3306
+    protocols: [tcp]
+    config_paths:
+      main: /etc/mysql/mariadb.conf.d/50-server.cnf
+      conf_d: /etc/mysql/conf.d
+      client: /etc/mysql/mariadb.conf.d/50-client.cnf
+    log_paths:
+      error: /var/log/mysql/error.log
+      slow_query: /var/log/mysql/slow-query.log
+    data_dirs:
+      data: /var/lib/mysql
+      run: /var/run/mysqld
+    pid_file: /var/run/mysqld/mysqld.pid
+    socket_paths:
+      unix: /var/run/mysqld/mysqld.sock
+    dependencies: [firewall]
+    health_check_cmd: "mysqladmin ping -u root 2>/dev/null"
+    reload_cmd: "mysqladmin flush-tables 2>/dev/null"
+    description: >
+      Relational database management system using MariaDB (MySQL-compatible).
+      Used by web applications requiring MySQL. Supports replication,
+      stored procedures, full-text search, and JSON columns.
+    risk_level: high
+    tags: [database, sql, mysql, storage]
+
+  - name: elasticsearch
+    display_name: "Elasticsearch"
+    type: elective
+    systemd_unit: elasticsearch.service
+    package: elasticsearch
+    default_port: 9200
+    protocols: [tcp]
+    config_paths:
+      main: /etc/elasticsearch/elasticsearch.yml
+      jvm: /etc/elasticsearch/jvm.options
+      log4j: /etc/elasticsearch/log4j2.properties
+    log_paths:
+      main: /var/log/elasticsearch/elasticsearch.log
+      gc: /var/log/elasticsearch/gc.log
+    data_dirs:
+      data: /var/lib/elasticsearch
+      run: /var/run/elasticsearch
+    pid_file: /var/run/elasticsearch/elasticsearch.pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "curl -sf http://localhost:9200/_cluster/health?pretty | grep status"
+    reload_cmd: "systemctl restart elasticsearch"
+    description: >
+      Distributed full-text search and analytics engine.
+      Indexes and searches large volumes of log data, documents,
+      and metrics. Core component of the ELK stack.
+    risk_level: medium
+    tags: [search, analytics, elk, logging]
+
+  - name: kibana
+    display_name: "Kibana"
+    type: elective
+    systemd_unit: kibana.service
+    package: kibana
+    default_port: 5601
+    protocols: [tcp]
+    config_paths:
+      main: /etc/kibana/kibana.yml
+    log_paths:
+      default: /var/log/kibana/kibana.log
+    data_dirs:
+      data: /var/lib/kibana
+      run: /var/run/kibana
+    pid_file: /var/run/kibana/kibana.pid
+    socket_paths: []
+    dependencies: [firewall, elasticsearch]
+    health_check_cmd: "curl -sf http://localhost:5601/api/status | python3 -c \"import sys,json; print(json.load(sys.stdin)['status']['overall']['state'])\""
+    reload_cmd: "systemctl restart kibana"
+    description: >
+      Web-based data visualization for Elasticsearch.
+      Provides dashboards, discovery, and visualizations for
+      log analysis, APM, and security analytics in the ELK stack.
+    risk_level: low
+    tags: [visualization, elk, logging, dashboards]
+
+  - name: logstash
+    display_name: "Logstash"
+    type: elective
+    systemd_unit: logstash.service
+    package: logstash
+    default_port: 5044
+    protocols: [tcp]
+    config_paths:
+      main: /etc/logstash/logstash.yml
+      pipelines: /etc/logstash/pipelines.yml
+      conf_d: /etc/logstash/conf.d
+    log_paths:
+      main: /var/log/logstash/logstash-plain.log
+      slowlog: /var/log/logstash/logstash-slowlog-plain.log
+    data_dirs:
+      data: /var/lib/logstash
+      run: /var/run/logstash
+    pid_file: /var/run/logstash/logstash.pid
+    socket_paths: []
+    dependencies: [firewall, elasticsearch]
+    health_check_cmd: "curl -sf http://localhost:9600/?pretty | python3 -c \"import sys,json; print(json.load(sys.stdin).get('status','unknown'))\""
+    reload_cmd: "systemctl restart logstash"
+    description: >
+      Log ingestion pipeline using Logstash.
+      Collects logs from syslog, files, and Beats agents; filters
+      and transforms them; and ships to Elasticsearch for indexing.
+    risk_level: low
+    tags: [logging, elk, ingestion, pipeline]
+
+  - name: rabbitmq
+    display_name: "RabbitMQ Message Broker"
+    type: elective
+    systemd_unit: rabbitmq-server.service
+    package: rabbitmq-server
+    default_port: 5672
+    protocols: [tcp]
+    config_paths:
+      main: /etc/rabbitmq/rabbitmq.conf
+      advanced: /etc/rabbitmq/advanced.config
+      env: /etc/rabbitmq/rabbitmq-env.conf
+    log_paths:
+      default: /var/log/rabbitmq/rabbit@localhost.log
+      upgrade: /var/log/rabbitmq/rabbit@localhost_upgrade.log
+    data_dirs:
+      mnesia: /var/lib/rabbitmq/mnesia
+      run: /var/run/rabbitmq
+    pid_file: /var/run/rabbitmq/pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "rabbitmq-diagnostics -q ping"
+    reload_cmd: "rabbitmqctl eval 'ok.'"
+    description: >
+      AMQP message broker using RabbitMQ.
+      Routes messages between producers and consumers via
+      exchanges, queues, and bindings. Supports topic, fanout,
+      direct, and header exchange types.
+    risk_level: medium
+    tags: [messaging, amqp, queue, microservices]
+
+  - name: memcached
+    display_name: "Memcached"
+    type: elective
+    systemd_unit: memcached.service
+    package: memcached
+    default_port: 11211
+    protocols: [tcp, udp]
+    config_paths:
+      main: /etc/memcached.conf
+    log_paths:
+      syslog: /var/log/syslog
+      journal: "journalctl -u memcached"
+    data_dirs:
+      run: /var/run/memcached
+    pid_file: /var/run/memcached/memcached.pid
+    socket_paths: []
+    dependencies: [firewall]
+    health_check_cmd: "echo stats | nc -w1 localhost 11211 | grep -c uptime"
+    reload_cmd: "systemctl restart memcached"
+    description: >
+      High-performance distributed memory caching daemon.
+      Caches database query results and computed values in RAM
+      to reduce backend load. Simple key-value interface.
+    risk_level: low
+    tags: [cache, memory, performance]
+
+  - name: fail2ban
+    display_name: "Fail2ban Intrusion Prevention"
+    type: elective
+    systemd_unit: fail2ban.service
+    package: fail2ban
+    default_port: null
+    protocols: []
+    config_paths:
+      main: /etc/fail2ban/fail2ban.conf
+      jail_conf: /etc/fail2ban/jail.conf
+      jail_local: /etc/fail2ban/jail.local
+      jail_d: /etc/fail2ban/jail.d
+      filter_d: /etc/fail2ban/filter.d
+      action_d: /etc/fail2ban/action.d
+    log_paths:
+      default: /var/log/fail2ban.log
+      syslog: /var/log/syslog
+    data_dirs:
+      db: /var/lib/fail2ban
+      run: /var/run/fail2ban
+    pid_file: /var/run/fail2ban/fail2ban.pid
+    socket_paths:
+      unix: /var/run/fail2ban/fail2ban.sock
+    dependencies: [firewall, ssh]
+    health_check_cmd: "fail2ban-client status 2>/dev/null | head -5"
+    reload_cmd: "fail2ban-client reload"
+    description: >
+      Intrusion prevention system using Fail2ban.
+      Monitors log files for repeated authentication failures and
+      other abuse patterns, then adds temporary firewall ban rules
+      via nftables/iptables to block offending IP addresses.
+    risk_level: medium
+    tags: [security, intrusion-prevention, firewall, ssh]

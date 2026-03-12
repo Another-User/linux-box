@@ -1,0 +1,55 @@
+optaware:
+  general:
+    hostname: "auto"  # auto-detect
+    environment: "production"
+    data_dir: "/data"
+    log_level: "INFO"
+
+  services:
+    core_services:
+      - dns
+      - dhcp
+      - firewall
+      - ntp
+      - ssh
+      - certificates
+    elective_services: []
+    auto_start: true
+
+  llm:
+    provider: "anthropic"
+    model: "claude-sonnet-4-20250514"
+    api_key: ""  # set via OPTAWARE_LLM_API_KEY env var
+    max_tokens: 4096
+    temperature: 0.1
+    cost_limit_daily: 5.00
+
+  perception:
+    log_watch_enabled: true
+    metric_interval_sec: 30
+    anomaly_sensitivity: 0.7
+
+  planning:
+    approval_mode: "hybrid"  # auto for low-risk, manual for high-risk
+    dry_run_default: true
+    max_concurrent_actions: 3
+
+  knowledge:
+    vector_store_url: "http://localhost:6333"
+    embedding_model: "all-MiniLM-L6-v2"
+    index_name: "optaware-knowledge"
+
+  docker:
+    socket_path: "/var/run/docker.sock"
+    compose_file: "docker/docker-compose.yml"
+    persistent_volumes:
+      config: "/data/config"
+      logs: "/data/logs"
+      knowledge: "/data/knowledge"
+      backups: "/data/backups"
+
+  portal:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8080
+    secret_key: ""  # auto-generated on first run

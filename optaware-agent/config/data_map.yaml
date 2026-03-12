@@ -1,0 +1,973 @@
+# OptAware Data Map
+# LLM-readable index of every significant data location on a managed Linux server.
+# This file is loaded into the agent's context to answer questions like:
+#   "Where is the SSH config?" or "What logs does Postfix write?"
+# Organized by SECTION (by-service) and by DATA-TYPE for cross-service queries.
+
+version: "1.0"
+schema: "optaware-data-map"
+description: >
+  Comprehensive filesystem map for an OptAware-managed Linux server.
+  Each entry contains: path, description, format, and owner service.
+  The LLM uses this map to construct shell commands, locate evidence,
+  and reason about the impact of changes.
+
+# ===========================================================================
+# SECTION 1: BY SERVICE
+# Grouped by the service that owns or primarily writes to each path.
+# ===========================================================================
+by_service:
+
+  # -------------------------------------------------------------------------
+  optaware:
+    description: "OptAware agent itself — config, state, and runtime data"
+    config:
+      - path: /etc/optaware/optaware.yaml
+        description: "Primary runtime configuration for the OptAware agent"
+        format: yaml
+        writable: true
+      - path: /etc/optaware/secrets.env
+        description: "Environment file with API keys and secrets (chmod 600)"
+        format: env
+        writable: false
+      - path: /etc/optaware/approved_actions.yaml
+        description: "Persistent record of admin-approved action templates"
+        format: yaml
+        writable: true
+    logs:
+      - path: /var/log/optaware/agent.log
+        description: "Main agent activity log — decisions, actions, outcomes"
+        format: text/structured
+        rotation: daily
+      - path: /var/log/optaware/audit.log
+        description: "Immutable audit trail of every action taken by the agent"
+        format: json-lines
+        rotation: weekly
+      - path: /var/log/optaware/llm_calls.log
+        description: "Record of all LLM API requests with token counts"
+        format: json-lines
+        rotation: daily
+    data:
+      - path: /data/config
+        description: "Persistent config backups and versioned snapshots"
+        format: directory
+      - path: /data/logs
+        description: "Long-term log archive for analysis"
+        format: directory
+      - path: /data/knowledge
+        description: "Vector store embeddings and knowledge base files"
+        format: directory
+      - path: /data/backups
+        description: "Restic backup repository root"
+        format: directory
+    runtime:
+      - path: /var/run/optaware/optaware.pid
+        description: "PID file for the running agent process"
+        format: pid
+      - path: /var/run/optaware/agent.sock
+        description: "Unix domain socket for local CLI communication"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  system:
+    description: "Core Linux OS paths relevant to server management"
+    config:
+      - path: /etc/hostname
+        description: "System hostname (short name)"
+        format: text
+      - path: /etc/hosts
+        description: "Static hostname-to-IP resolution entries"
+        format: text
+      - path: /etc/resolv.conf
+        description: "DNS resolver configuration (nameservers, search domains)"
+        format: text
+      - path: /etc/nsswitch.conf
+        description: "Name service switch — order for resolving names"
+        format: text
+      - path: /etc/fstab
+        description: "Filesystem mount table"
+        format: text
+      - path: /etc/os-release
+        description: "OS identification (distro name, version)"
+        format: env
+      - path: /etc/machine-id
+        description: "Unique machine identifier"
+        format: text
+      - path: /etc/timezone
+        description: "System timezone setting"
+        format: text
+      - path: /etc/locale.gen
+        description: "Locale definitions to generate"
+        format: text
+      - path: /etc/environment
+        description: "System-wide environment variable definitions"
+        format: env
+      - path: /etc/sudoers
+        description: "Sudo privilege configuration"
+        format: text
+      - path: /etc/sudoers.d
+        description: "Drop-in sudoers rules directory"
+        format: directory
+      - path: /etc/passwd
+        description: "User account database"
+        format: text
+      - path: /etc/shadow
+        description: "Hashed passwords (root-only)"
+        format: text
+      - path: /etc/group
+        description: "Group membership database"
+        format: text
+      - path: /etc/sysctl.conf
+        description: "Kernel parameter overrides at boot"
+        format: text
+      - path: /etc/sysctl.d
+        description: "Drop-in sysctl configuration directory"
+        format: directory
+    logs:
+      - path: /var/log/syslog
+        description: "General system log (most daemons write here)"
+        format: syslog
+        rotation: daily
+      - path: /var/log/auth.log
+        description: "Authentication events — logins, sudo, PAM"
+        format: syslog
+        rotation: daily
+      - path: /var/log/kern.log
+        description: "Kernel messages — hardware events, driver errors"
+        format: syslog
+        rotation: daily
+      - path: /var/log/dmesg
+        description: "Kernel ring buffer from last boot"
+        format: text
+      - path: /var/log/dpkg.log
+        description: "Package installation/removal history"
+        format: text
+        rotation: monthly
+      - path: /var/log/apt/history.log
+        description: "APT command history"
+        format: text
+      - path: /var/log/apt/term.log
+        description: "APT terminal output during operations"
+        format: text
+      - path: /var/log/faillog
+        description: "Failed login attempts"
+        format: binary
+      - path: /var/log/lastlog
+        description: "Most recent login for each user"
+        format: binary
+      - path: /var/log/wtmp
+        description: "Login/logout history (readable via last)"
+        format: binary
+      - path: /var/log/btmp
+        description: "Failed login attempts (readable via lastb)"
+        format: binary
+    data:
+      - path: /proc/cpuinfo
+        description: "CPU model, cores, flags (virtual fs)"
+        format: text
+      - path: /proc/meminfo
+        description: "Memory usage breakdown (virtual fs)"
+        format: text
+      - path: /proc/loadavg
+        description: "1/5/15-minute load averages"
+        format: text
+      - path: /proc/net/dev
+        description: "Network interface statistics"
+        format: text
+      - path: /proc/diskstats
+        description: "Block device I/O statistics"
+        format: text
+      - path: /sys/class/net
+        description: "Network interface attributes (virtual fs)"
+        format: directory
+      - path: /tmp
+        description: "Temporary files — cleared on reboot"
+        format: directory
+      - path: /var/tmp
+        description: "Persistent temporary files"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  systemd:
+    description: "Systemd service manager"
+    config:
+      - path: /etc/systemd/system
+        description: "Admin-managed unit files (override /lib/systemd)"
+        format: directory
+      - path: /etc/systemd/system.conf
+        description: "System manager configuration"
+        format: ini
+      - path: /etc/systemd/journald.conf
+        description: "Journal logging configuration"
+        format: ini
+      - path: /etc/systemd/logind.conf
+        description: "Login manager configuration"
+        format: ini
+      - path: /lib/systemd/system
+        description: "Package-installed unit files"
+        format: directory
+      - path: /run/systemd/units
+        description: "Runtime unit state"
+        format: directory
+    logs:
+      - path: /var/log/journal
+        description: "Persistent systemd journal (binary, read via journalctl)"
+        format: binary
+    runtime:
+      - path: /run/systemd
+        description: "Runtime systemd state directory"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  dns:
+    description: "BIND9 DNS server"
+    config:
+      - path: /etc/bind/named.conf
+        description: "Root configuration — includes other files"
+        format: bind-config
+      - path: /etc/bind/named.conf.options
+        description: "Global options — recursion, forwarders, ACLs"
+        format: bind-config
+      - path: /etc/bind/named.conf.local
+        description: "Local zone declarations"
+        format: bind-config
+      - path: /etc/bind/named.conf.default-zones
+        description: "Default zone definitions (root, localhost)"
+        format: bind-config
+      - path: /etc/bind/zones
+        description: "Zone data files directory"
+        format: directory
+    logs:
+      - path: /var/log/named/default.log
+        description: "General BIND9 messages"
+        format: text
+      - path: /var/log/named/query.log
+        description: "DNS query log (high volume when enabled)"
+        format: text
+      - path: /var/log/named/security.log
+        description: "Security events — TSIG failures, ACL denials"
+        format: text
+    data:
+      - path: /var/cache/bind
+        description: "Resolver cache and slave zone files"
+        format: directory
+    runtime:
+      - path: /var/run/named/named.pid
+        description: "BIND9 process ID"
+        format: pid
+
+  # -------------------------------------------------------------------------
+  dhcp:
+    description: "Kea DHCP4 server"
+    config:
+      - path: /etc/kea/kea-dhcp4.conf
+        description: "DHCP4 server config — subnets, pools, options"
+        format: json
+    logs:
+      - path: /var/log/kea/kea-dhcp4.log
+        description: "DHCP lease assignments and errors"
+        format: text
+    data:
+      - path: /var/lib/kea/dhcp4.leases
+        description: "Current DHCP lease database"
+        format: csv
+    runtime:
+      - path: /var/run/kea/kea-dhcp4.kea-dhcp4.pid
+        description: "Kea DHCP4 process ID"
+        format: pid
+      - path: /var/run/kea/kea4-ctrl-socket
+        description: "Kea control socket for runtime commands"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  firewall:
+    description: "nftables packet filtering"
+    config:
+      - path: /etc/nftables.conf
+        description: "Main nftables ruleset"
+        format: nft
+      - path: /etc/nftables.d
+        description: "Modular nftables rules drop-in directory"
+        format: directory
+    logs:
+      - path: /var/log/kern.log
+        description: "nftables LOG target output goes to kernel log"
+        format: syslog
+
+  # -------------------------------------------------------------------------
+  vpn:
+    description: "WireGuard VPN"
+    config:
+      - path: /etc/wireguard/wg0.conf
+        description: "WireGuard interface and peer configuration"
+        format: ini
+      - path: /etc/wireguard
+        description: "WireGuard keys directory (chmod 700)"
+        format: directory
+    data:
+      - path: /var/run/wireguard
+        description: "Runtime WireGuard state"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  web:
+    description: "Nginx web server"
+    config:
+      - path: /etc/nginx/nginx.conf
+        description: "Main Nginx configuration"
+        format: nginx-config
+      - path: /etc/nginx/sites-available
+        description: "Available virtual host configurations"
+        format: directory
+      - path: /etc/nginx/sites-enabled
+        description: "Enabled virtual hosts (symlinks to sites-available)"
+        format: directory
+      - path: /etc/nginx/conf.d
+        description: "Global config snippets"
+        format: directory
+      - path: /etc/nginx/mime.types
+        description: "MIME type mappings"
+        format: text
+    logs:
+      - path: /var/log/nginx/access.log
+        description: "HTTP request access log"
+        format: text/combined
+        rotation: daily
+      - path: /var/log/nginx/error.log
+        description: "Nginx error messages"
+        format: text
+        rotation: daily
+    data:
+      - path: /var/www/html
+        description: "Default web root for static files"
+        format: directory
+      - path: /var/cache/nginx
+        description: "Proxy cache storage"
+        format: directory
+    runtime:
+      - path: /var/run/nginx.pid
+        description: "Nginx master process ID"
+        format: pid
+
+  # -------------------------------------------------------------------------
+  mail_smtp:
+    description: "Postfix SMTP server"
+    config:
+      - path: /etc/postfix/main.cf
+        description: "Primary Postfix configuration parameters"
+        format: postfix-config
+      - path: /etc/postfix/master.cf
+        description: "Postfix daemon process table"
+        format: postfix-config
+      - path: /etc/postfix/virtual
+        description: "Virtual mailbox/alias mappings"
+        format: text
+      - path: /etc/aliases
+        description: "Local mail alias table"
+        format: text
+      - path: /etc/postfix/tls
+        description: "TLS certificate and key files for Postfix"
+        format: directory
+    logs:
+      - path: /var/log/mail.log
+        description: "SMTP delivery log — sent, received, bounced"
+        format: syslog
+        rotation: weekly
+      - path: /var/log/mail.err
+        description: "Postfix error messages"
+        format: syslog
+    data:
+      - path: /var/spool/postfix
+        description: "Postfix mail queue directory"
+        format: directory
+      - path: /var/lib/postfix
+        description: "Postfix persistent data (db files)"
+        format: directory
+    runtime:
+      - path: /var/spool/postfix/pid/master.pid
+        description: "Postfix master process ID"
+        format: pid
+
+  # -------------------------------------------------------------------------
+  mail_imap:
+    description: "Dovecot IMAP/POP3 server"
+    config:
+      - path: /etc/dovecot/dovecot.conf
+        description: "Root Dovecot configuration"
+        format: dovecot-config
+      - path: /etc/dovecot/conf.d
+        description: "Modular Dovecot configuration drop-ins"
+        format: directory
+      - path: /etc/dovecot/users
+        description: "Virtual user password file"
+        format: text
+    logs:
+      - path: /var/log/dovecot/info.log
+        description: "IMAP session and delivery info"
+        format: text
+      - path: /var/log/dovecot/error.log
+        description: "Dovecot errors and warnings"
+        format: text
+    data:
+      - path: /var/mail
+        description: "Mailbox storage root"
+        format: maildir/mbox
+      - path: /var/lib/dovecot
+        description: "Dovecot index files and subscriptions"
+        format: directory
+    runtime:
+      - path: /var/run/dovecot/master.pid
+        description: "Dovecot master process ID"
+        format: pid
+      - path: /var/run/dovecot/lmtp
+        description: "LMTP socket for Postfix local delivery"
+        format: socket
+      - path: /var/run/dovecot/auth-userdb
+        description: "Auth socket for user database lookups"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  database_pg:
+    description: "PostgreSQL relational database"
+    config:
+      - path: /etc/postgresql/15/main/postgresql.conf
+        description: "PostgreSQL server parameters"
+        format: text
+      - path: /etc/postgresql/15/main/pg_hba.conf
+        description: "Client authentication rules"
+        format: text
+      - path: /etc/postgresql/15/main/pg_ident.conf
+        description: "OS user to PostgreSQL user mapping"
+        format: text
+    logs:
+      - path: /var/log/postgresql/postgresql-15-main.log
+        description: "PostgreSQL query and error log"
+        format: text
+        rotation: daily
+    data:
+      - path: /var/lib/postgresql/15/main
+        description: "PostgreSQL data cluster"
+        format: directory
+    runtime:
+      - path: /var/run/postgresql/15-main.pid
+        description: "PostgreSQL postmaster process ID"
+        format: pid
+      - path: /var/run/postgresql/.s.PGSQL.5432
+        description: "PostgreSQL Unix domain socket"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  monitoring:
+    description: "Prometheus metrics collector"
+    config:
+      - path: /etc/prometheus/prometheus.yml
+        description: "Scrape configs, global settings, alertmanager targets"
+        format: yaml
+      - path: /etc/prometheus/rules
+        description: "Alerting and recording rule files"
+        format: directory
+    logs:
+      - path: /var/log/syslog
+        description: "Prometheus logs via syslog"
+        format: syslog
+    data:
+      - path: /var/lib/prometheus
+        description: "Prometheus time-series data (TSDB)"
+        format: directory
+    runtime:
+      - path: /var/run/prometheus/prometheus.pid
+        description: "Prometheus process ID"
+        format: pid
+
+  # -------------------------------------------------------------------------
+  backup:
+    description: "Restic backup via systemd timer"
+    config:
+      - path: /etc/restic/backup.env
+        description: "Repository URL, password, and source paths"
+        format: env
+      - path: /etc/restic/excludes.txt
+        description: "Glob patterns for files to exclude from backup"
+        format: text
+      - path: /etc/systemd/system/restic-backup.service
+        description: "Backup service unit file"
+        format: systemd-unit
+      - path: /etc/systemd/system/restic-backup.timer
+        description: "Backup schedule timer unit"
+        format: systemd-unit
+    logs:
+      - path: /var/log/restic/backup.log
+        description: "Backup run output — bytes processed, snapshot ID"
+        format: text
+    data:
+      - path: /data/backups/restic
+        description: "Restic repository containing encrypted backup snapshots"
+        format: directory
+    cache:
+      - path: /root/.cache/restic
+        description: "Restic metadata cache for faster operations"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  ntp:
+    description: "Chrony NTP daemon"
+    config:
+      - path: /etc/chrony/chrony.conf
+        description: "NTP server sources, drift file, allow/deny directives"
+        format: text
+      - path: /etc/chrony/chrony.keys
+        description: "NTP authentication keys"
+        format: text
+    logs:
+      - path: /var/log/chrony/measurements.log
+        description: "Raw offset/delay measurements per source"
+        format: text
+      - path: /var/log/chrony/statistics.log
+        description: "Statistical summaries of clock performance"
+        format: text
+      - path: /var/log/chrony/tracking.log
+        description: "Clock tracking log — offset, freq error, stratum"
+        format: text
+    data:
+      - path: /var/lib/chrony/chrony.drift
+        description: "Clock frequency drift estimate (persisted across reboots)"
+        format: text
+    runtime:
+      - path: /var/run/chrony/chronyd.pid
+        description: "Chrony daemon process ID"
+        format: pid
+      - path: /var/run/chrony/chronyd.sock
+        description: "Local control socket (used by chronyc)"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  ssh:
+    description: "OpenSSH daemon"
+    config:
+      - path: /etc/ssh/sshd_config
+        description: "SSH server configuration — auth methods, ports, ciphers"
+        format: text
+      - path: /etc/ssh/sshd_config.d
+        description: "Drop-in SSH config directory (included by sshd_config)"
+        format: directory
+      - path: /etc/ssh/ssh_host_rsa_key
+        description: "RSA host private key"
+        format: pem
+      - path: /etc/ssh/ssh_host_ed25519_key
+        description: "Ed25519 host private key"
+        format: pem
+      - path: /root/.ssh/authorized_keys
+        description: "Authorized public keys for root login"
+        format: text
+      - path: /home
+        description: "User home directories containing .ssh/authorized_keys"
+        format: directory
+    logs:
+      - path: /var/log/auth.log
+        description: "SSH authentication attempts — success, failure, key used"
+        format: syslog
+    runtime:
+      - path: /var/run/sshd.pid
+        description: "SSH daemon process ID"
+        format: pid
+
+  # -------------------------------------------------------------------------
+  certificates:
+    description: "Certbot / Let's Encrypt TLS certificates"
+    config:
+      - path: /etc/letsencrypt/cli.ini
+        description: "Default certbot CLI options"
+        format: ini
+      - path: /etc/letsencrypt/renewal
+        description: "Per-certificate renewal configuration files"
+        format: directory
+    data:
+      - path: /etc/letsencrypt/live
+        description: "Symlinks to current active certificate files"
+        format: directory
+      - path: /etc/letsencrypt/archive
+        description: "Historical certificate and key versions"
+        format: directory
+    logs:
+      - path: /var/log/letsencrypt/letsencrypt.log
+        description: "Certbot renewal and challenge log"
+        format: text
+
+  # -------------------------------------------------------------------------
+  samba:
+    description: "Samba SMB/CIFS file sharing"
+    config:
+      - path: /etc/samba/smb.conf
+        description: "Samba global and share definitions"
+        format: ini
+    logs:
+      - path: /var/log/samba/log.smbd
+        description: "SMB daemon log — connections, share access"
+        format: text
+      - path: /var/log/samba/log.nmbd
+        description: "NetBIOS name service log"
+        format: text
+    data:
+      - path: /srv/samba/shares
+        description: "Samba share data root"
+        format: directory
+      - path: /var/lib/samba
+        description: "Samba TDB databases and state"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  ldap:
+    description: "OpenLDAP directory service"
+    config:
+      - path: /etc/ldap/slapd.d
+        description: "Online configuration database (OLC / cn=config)"
+        format: directory
+      - path: /etc/ldap/ldap.conf
+        description: "Client-side LDAP defaults"
+        format: text
+    logs:
+      - path: /var/log/syslog
+        description: "slapd logs via syslog"
+        format: syslog
+    data:
+      - path: /var/lib/ldap
+        description: "LDAP database backend files"
+        format: directory
+    runtime:
+      - path: /var/run/slapd/slapd.pid
+        description: "slapd process ID"
+        format: pid
+      - path: /var/run/slapd/ldapi
+        description: "LDAP Unix IPC socket"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  redis:
+    description: "Redis in-memory cache/store"
+    config:
+      - path: /etc/redis/redis.conf
+        description: "Redis server configuration — persistence, memory limits"
+        format: text
+    logs:
+      - path: /var/log/redis/redis-server.log
+        description: "Redis startup, errors, and slow queries"
+        format: text
+    data:
+      - path: /var/lib/redis
+        description: "Redis RDB/AOF persistence files"
+        format: directory
+    runtime:
+      - path: /var/run/redis/redis-server.pid
+        description: "Redis process ID"
+        format: pid
+      - path: /var/run/redis/redis.sock
+        description: "Redis Unix domain socket"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  grafana:
+    description: "Grafana dashboards"
+    config:
+      - path: /etc/grafana/grafana.ini
+        description: "Grafana server configuration — database, auth, SMTP"
+        format: ini
+      - path: /etc/grafana/provisioning/datasources
+        description: "Auto-provisioned data source definitions"
+        format: directory
+      - path: /etc/grafana/provisioning/dashboards
+        description: "Auto-provisioned dashboard JSON files"
+        format: directory
+    logs:
+      - path: /var/log/grafana/grafana.log
+        description: "Grafana server log"
+        format: text
+    data:
+      - path: /var/lib/grafana
+        description: "Grafana SQLite database and plugin storage"
+        format: directory
+
+  # -------------------------------------------------------------------------
+  fail2ban:
+    description: "Fail2ban intrusion prevention"
+    config:
+      - path: /etc/fail2ban/jail.local
+        description: "Local jail overrides (use this, not jail.conf)"
+        format: ini
+      - path: /etc/fail2ban/jail.d
+        description: "Individual jail configuration files"
+        format: directory
+      - path: /etc/fail2ban/filter.d
+        description: "Log-parsing filter definitions"
+        format: directory
+      - path: /etc/fail2ban/action.d
+        description: "Ban action definitions (iptables, nftables, mail)"
+        format: directory
+    logs:
+      - path: /var/log/fail2ban.log
+        description: "Fail2ban banning/unbanning events"
+        format: text
+    data:
+      - path: /var/lib/fail2ban/fail2ban.sqlite3
+        description: "Persistent ban database"
+        format: sqlite
+    runtime:
+      - path: /var/run/fail2ban/fail2ban.pid
+        description: "Fail2ban process ID"
+        format: pid
+      - path: /var/run/fail2ban/fail2ban.sock
+        description: "Control socket for fail2ban-client"
+        format: socket
+
+  # -------------------------------------------------------------------------
+  docker:
+    description: "Docker container runtime"
+    config:
+      - path: /etc/docker/daemon.json
+        description: "Docker daemon configuration — log driver, storage, DNS"
+        format: json
+      - path: /etc/docker/certs.d
+        description: "Registry TLS certificate directory"
+        format: directory
+    logs:
+      - path: /var/log/docker.log
+        description: "Docker daemon log"
+        format: text
+    data:
+      - path: /var/lib/docker
+        description: "Docker images, containers, volumes, and networks"
+        format: directory
+    runtime:
+      - path: /var/run/docker.sock
+        description: "Docker daemon API socket"
+        format: socket
+      - path: /var/run/docker.pid
+        description: "Docker daemon process ID"
+        format: pid
+
+# ===========================================================================
+# SECTION 2: BY DATA TYPE
+# Cross-service view for queries like "list all config files" or "where are
+# all Unix sockets on this system?"
+# ===========================================================================
+by_data_type:
+
+  all_config_files:
+    description: "Every configuration file managed by OptAware"
+    paths:
+      - /etc/optaware/optaware.yaml
+      - /etc/bind/named.conf
+      - /etc/bind/named.conf.options
+      - /etc/bind/named.conf.local
+      - /etc/kea/kea-dhcp4.conf
+      - /etc/nftables.conf
+      - /etc/wireguard/wg0.conf
+      - /etc/nginx/nginx.conf
+      - /etc/postfix/main.cf
+      - /etc/postfix/master.cf
+      - /etc/dovecot/dovecot.conf
+      - /etc/postgresql/15/main/postgresql.conf
+      - /etc/postgresql/15/main/pg_hba.conf
+      - /etc/prometheus/prometheus.yml
+      - /etc/chrony/chrony.conf
+      - /etc/ssh/sshd_config
+      - /etc/letsencrypt/cli.ini
+      - /etc/samba/smb.conf
+      - /etc/ldap/slapd.d
+      - /etc/redis/redis.conf
+      - /etc/grafana/grafana.ini
+      - /etc/fail2ban/jail.local
+      - /etc/docker/daemon.json
+      - /etc/systemd/system.conf
+      - /etc/sysctl.conf
+      - /etc/hosts
+      - /etc/resolv.conf
+      - /etc/fstab
+
+  all_log_directories:
+    description: "All directories containing service log files"
+    paths:
+      - /var/log/optaware
+      - /var/log/named
+      - /var/log/kea
+      - /var/log/nginx
+      - /var/log/mail.log
+      - /var/log/postgresql
+      - /var/log/dovecot
+      - /var/log/chrony
+      - /var/log/samba
+      - /var/log/restic
+      - /var/log/letsencrypt
+      - /var/log/grafana
+      - /var/log/redis
+      - /var/log/fail2ban.log
+      - /var/log/auth.log
+      - /var/log/syslog
+      - /var/log/kern.log
+      - /var/log/journal
+
+  all_unix_sockets:
+    description: "All Unix domain sockets used for inter-process communication"
+    paths:
+      - path: /var/run/optaware/agent.sock
+        owner: optaware
+        purpose: "Agent CLI communication"
+      - path: /var/run/docker.sock
+        owner: docker
+        purpose: "Docker API"
+      - path: /var/run/postgresql/.s.PGSQL.5432
+        owner: database_pg
+        purpose: "PostgreSQL client connections"
+      - path: /var/run/dovecot/lmtp
+        owner: mail_imap
+        purpose: "Mail delivery from Postfix"
+      - path: /var/run/dovecot/auth-userdb
+        owner: mail_imap
+        purpose: "Auth user lookups"
+      - path: /var/run/kea/kea4-ctrl-socket
+        owner: dhcp
+        purpose: "Kea runtime control"
+      - path: /var/run/chrony/chronyd.sock
+        owner: ntp
+        purpose: "chronyc control interface"
+      - path: /var/run/slapd/ldapi
+        owner: ldap
+        purpose: "LDAP IPC"
+      - path: /var/run/redis/redis.sock
+        owner: redis
+        purpose: "Redis client connections"
+      - path: /var/run/fail2ban/fail2ban.sock
+        owner: fail2ban
+        purpose: "fail2ban-client control"
+      - path: /var/run/cups/cups.sock
+        owner: printing
+        purpose: "CUPS print server"
+      - path: /run/systemd/private/journal.sock
+        owner: systemd
+        purpose: "Journal logging"
+
+  all_pid_files:
+    description: "PID files written by managed daemons"
+    paths:
+      - path: /var/run/optaware/optaware.pid
+        owner: optaware
+      - path: /var/run/named/named.pid
+        owner: dns
+      - path: /var/run/kea/kea-dhcp4.kea-dhcp4.pid
+        owner: dhcp
+      - path: /var/run/nginx.pid
+        owner: web
+      - path: /var/spool/postfix/pid/master.pid
+        owner: mail_smtp
+      - path: /var/run/dovecot/master.pid
+        owner: mail_imap
+      - path: /var/run/postgresql/15-main.pid
+        owner: database_pg
+      - path: /var/run/prometheus/prometheus.pid
+        owner: monitoring
+      - path: /var/run/chrony/chronyd.pid
+        owner: ntp
+      - path: /var/run/sshd.pid
+        owner: ssh
+      - path: /var/run/slapd/slapd.pid
+        owner: ldap
+      - path: /var/run/redis/redis-server.pid
+        owner: redis
+      - path: /var/run/grafana/grafana-server.pid
+        owner: grafana
+      - path: /var/run/fail2ban/fail2ban.pid
+        owner: fail2ban
+      - path: /var/run/docker.pid
+        owner: docker
+
+  all_data_directories:
+    description: "Persistent data directories that should be backed up"
+    paths:
+      - path: /data
+        owner: optaware
+        backup_priority: critical
+      - path: /var/lib/postgresql/15/main
+        owner: database_pg
+        backup_priority: critical
+      - path: /var/mail
+        owner: mail_imap
+        backup_priority: high
+      - path: /var/lib/mysql
+        owner: mysql
+        backup_priority: critical
+      - path: /var/lib/elasticsearch
+        owner: elasticsearch
+        backup_priority: high
+      - path: /etc/letsencrypt
+        owner: certificates
+        backup_priority: critical
+      - path: /etc/wireguard
+        owner: vpn
+        backup_priority: critical
+      - path: /var/lib/ldap
+        owner: ldap
+        backup_priority: critical
+      - path: /srv/samba/shares
+        owner: samba
+        backup_priority: medium
+      - path: /srv/nfs
+        owner: nfs
+        backup_priority: medium
+      - path: /var/lib/grafana
+        owner: grafana
+        backup_priority: medium
+      - path: /var/lib/prometheus
+        owner: monitoring
+        backup_priority: low
+      - path: /var/cache/bind
+        owner: dns
+        backup_priority: low
+
+  security_sensitive_paths:
+    description: >
+      Paths containing secrets, keys, or credentials that require
+      strict permissions and should never be world-readable.
+    paths:
+      - path: /etc/optaware/secrets.env
+        why: "API keys and LLM provider credentials"
+        required_mode: "0600"
+        required_owner: "root:root"
+      - path: /etc/wireguard/wg0.conf
+        why: "WireGuard private key"
+        required_mode: "0600"
+        required_owner: "root:root"
+      - path: /etc/ssh/ssh_host_rsa_key
+        why: "SSH host private key"
+        required_mode: "0600"
+        required_owner: "root:root"
+      - path: /etc/ssh/ssh_host_ed25519_key
+        why: "SSH host private key"
+        required_mode: "0600"
+        required_owner: "root:root"
+      - path: /etc/letsencrypt/live
+        why: "TLS private keys"
+        required_mode: "0750"
+        required_owner: "root:root"
+      - path: /etc/letsencrypt/archive
+        why: "TLS private keys archive"
+        required_mode: "0700"
+        required_owner: "root:root"
+      - path: /etc/shadow
+        why: "Hashed user passwords"
+        required_mode: "0640"
+        required_owner: "root:shadow"
+      - path: /etc/sudoers
+        why: "Privilege escalation configuration"
+        required_mode: "0440"
+        required_owner: "root:root"
+      - path: /var/lib/postgresql/15/main
+        why: "Database files including password hashes"
+        required_mode: "0700"
+        required_owner: "postgres:postgres"
+      - path: /etc/restic/backup.env
+        why: "Repository password and remote credentials"
+        required_mode: "0600"
+        required_owner: "root:root"
+      - path: /etc/chrony/chrony.keys
+        why: "NTP authentication keys"
+        required_mode: "0640"
+        required_owner: "root:_chrony"
